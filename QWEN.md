@@ -27,6 +27,14 @@ lgbp2/
 ├── requirements.txt        # 项目依赖
 ├── concept_ladder.html     # 连板天梯可视化前端界面
 ├── concept_ladder - 副本.html  # HTML文件备份
+├── depend/                 # 依赖模块目录
+│   ├── __init__.py         # 包初始化文件
+│   ├── config.py           # 配置管理模块
+│   ├── di_container.py     # 依赖注入容器
+│   ├── interfaces.py       # 接口定义模块
+│   ├── services.py         # 服务实现模块
+│   ├── backup_manager.py   # 数据备份管理模块
+│   └── monitoring.py       # 监控指标模块
 ├── data/                   # 数据存储目录
 │   ├── kline_data.js       # K线数据JS文件
 │   ├── ladder_data.js      # 连板数据JS文件

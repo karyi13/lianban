@@ -16,19 +16,143 @@ import json
 import argparse
 from typing import Optional
 from function.stock_concepts import get_stock_concepts
+import requests
+from functools import wraps
+import random
+from depend.config import config
+from depend.di_container import container
+from depend.services import CompositeDataFetcher
+from depend.backup_manager import backup_manager
+from depend.monitoring import monitoring_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def retry_with_backoff(max_retries=None, base_delay=None, max_delay=None, backoff_factor=None):
+    """
+    重试装饰器，带指数退避
+    """
+    # Use config values if not provided
+    max_retries = max_retries or config.MAX_RETRIES
+    base_delay = base_delay or config.BASE_DELAY
+    max_delay = max_delay or config.MAX_DELAY
+    backoff_factor = backoff_factor or config.BACKOFF_FACTOR
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    result = func(*args, **kwargs)
+                    return result
+                except Exception as e:
+                    retries += 1
+                    if retries >= max_retries:
+                        logger.error(f"函数 {func.__name__} 在重试 {max_retries} 次后仍然失败: {str(e)}")
+                        raise e
+                    # 指数退避延迟
+                    delay = min(base_delay * (backoff_factor ** retries) + random.uniform(0, 1), max_delay)
+                    logger.warning(f"函数 {func.__name__} 执行失败，第 {retries} 次重试，{delay:.2f}秒后重试: {str(e)}")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
+
 # Constants
-DEFAULT_START_DATE = '20241220'
+DEFAULT_START_DATE = config.DEFAULT_START_DATE
+DEFAULT_OUTPUT_FILE = config.DEFAULT_OUTPUT_FILE
+
+
+def validate_stock_data(df):
+    """
+    验证股票数据的完整性与合理性
+
+    Args:
+        df (pd.DataFrame): 股票数据DataFrame
+
+    Returns:
+        tuple: (is_valid, validation_report)
+    """
+    if df.empty:
+        return False, "数据为空"
+
+    validation_report = []
+    is_valid = True
+
+    # 检查必需列是否存在
+    required_columns = ['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        validation_report.append(f"缺少必要列: {missing_columns}")
+        is_valid = False
+
+    # 检查数据类型
+    if 'date' in df.columns:
+        # 尝试转换日期格式
+        try:
+            df['date'] = pd.to_datetime(df['date'], format='%Y%m%d', errors='coerce')
+            invalid_dates = df['date'].isna().sum()
+            if invalid_dates > 0:
+                validation_report.append(f"无效日期格式: {invalid_dates} 条记录")
+        except:
+            validation_report.append("日期格式转换失败")
+            is_valid = False
+
+    # 检查数值列的合理性
+    numeric_columns = ['open', 'high', 'low', 'close', 'volume']
+    for col in numeric_columns:
+        if col in df.columns:
+            # 检查负值
+            negative_values = (df[col] < 0).sum()
+            if negative_values > 0:
+                validation_report.append(f"{col} 列存在 {negative_values} 个负值")
+
+            # 检查异常值（如价格为0或异常高）
+            if col in ['open', 'high', 'low', 'close']:
+                zero_prices = (df[col] == 0).sum()
+                if zero_prices > 0:
+                    validation_report.append(f"{col} 列存在 {zero_prices} 个零价格")
+
+                # 检查价格是否合理（比如超过10000元的股票可能需要检查）
+                high_prices = (df[col] > 10000).sum()
+                if high_prices > 0:
+                    validation_report.append(f"{col} 列存在 {high_prices} 个异常高价格(>10000)")
+
+    # 检查 OHLC 关系的合理性
+    if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+        invalid_ohlc = (
+            (df['high'] < df['low']) |
+            (df['high'] < df['open']) |
+            (df['high'] < df['close']) |
+            (df['low'] > df['open']) |
+            (df['low'] > df['close'])
+        ).sum()
+        if invalid_ohlc > 0:
+            validation_report.append(f"OHLC关系不合理: {invalid_ohlc} 条记录")
+            is_valid = False
+
+    # 检查重复数据
+    duplicate_rows = df.duplicated(subset=['symbol', 'date']).sum()
+    if duplicate_rows > 0:
+        validation_report.append(f"存在 {duplicate_rows} 条重复数据")
+
+    # 检查缺失值
+    total_missing = df.isnull().sum().sum()
+    if total_missing > 0:
+        validation_report.append(f"存在 {total_missing} 个缺失值")
+
+    return is_valid, validation_report
 
 def get_default_end_date():
     """
-    Get the default end date based on current time.
-    If market has closed (after 15:00), use today's date.
-    If market hasn't closed (before 15:00), use yesterday's date.
+    获取默认结束日期，基于当前时间。
+    如果市场已收盘（15:00后），使用今天日期。
+    如果市场未收盘（15:00前），使用昨天日期。
+
+    Returns:
+        str: 格式为 'YYYYMMDD' 的日期字符串
     """
     now = datetime.datetime.now()
     current_time = now.time()
@@ -50,8 +174,8 @@ def get_default_end_date():
     return target_date.strftime('%Y%m%d')
 
 DEFAULT_END_DATE = get_default_end_date()
-DEFAULT_OUTPUT_FILE = os.path.join('data', 'stock_daily_latest.parquet')
-MAX_WORKERS = 20  # Reduced workers to avoid connection spamming
+DEFAULT_OUTPUT_FILE = config.DEFAULT_OUTPUT_FILE
+MAX_WORKERS = config.MAX_WORKERS  # Reduced workers to avoid connection spamming
 
 # Thread-local storage for PyTDX connections
 thread_local = threading.local()
@@ -62,16 +186,13 @@ def get_thread_api():
         api = TdxHq_API(heartbeat=True)
         # Try connecting
         try:
-            if api.connect('121.36.81.195', 7709, time_out=10):
+            primary_server = config.PYTDX_SERVERS[0]
+            if api.connect(primary_server[0], primary_server[1], time_out=config.REQUEST_TIMEOUT):
                 thread_local.api = api
                 return api
             # Fallbacks
-            fallback_ips = [
-                ('119.147.212.81', 7709),
-                ('47.107.75.159', 7709)
-            ]
-            for ip, port in fallback_ips:
-                if api.connect(ip, port, time_out=10):
+            for server in config.PYTDX_SERVERS[1:]:
+                if api.connect(server[0], server[1], time_out=config.REQUEST_TIMEOUT):
                     thread_local.api = api
                     return api
         except:
@@ -80,76 +201,52 @@ def get_thread_api():
     return thread_local.api
 
 class DataFetcher:
-    def __init__(self, output_file=DEFAULT_OUTPUT_FILE):
-        # Initial connection just to test or get stock list
-        self.main_api = TdxHq_API()
-        self.connected = False
+    def __init__(self, output_file=DEFAULT_OUTPUT_FILE, data_fetcher_service=None, data_storage=None):
+        # Use injected service or get from container
+        self.data_fetcher_service = data_fetcher_service or container.get('data_fetcher')
+        self.data_storage = data_storage or container.get('data_storage')
         self.output_file = output_file
-        self.connect_main()
 
-    def connect_main(self):
-        try:
-            if self.main_api.connect('121.36.81.195', 7709, time_out=10):
-                self.connected = True
-        except:
-            pass
 
+    @retry_with_backoff(max_retries=3, base_delay=2, max_delay=15)
     def get_stock_list(self):
-        """Get all A-share stocks."""
-        try:
-            logger.info("Fetching stock list via AkShare...")
-            stock_df = ak.stock_zh_a_spot_em()
-            stocks = []
-            for _, row in stock_df.iterrows():
-                symbol = str(row['代码'])
-                name = row['名称']
-                if symbol.startswith(('900', '200')):
-                    continue
+        """
+        获取所有A股股票列表
 
-                if symbol.startswith(('60', '68')):
-                    full_symbol = f"{symbol}.SH"
-                elif symbol.startswith(('00', '30')):
-                    full_symbol = f"{symbol}.SZ"
-                else:
-                    continue
+        Returns:
+            list: 包含股票信息的字典列表，每个字典包含 symbol, code, name 等字段
+        """
+        return self.data_fetcher_service.get_stock_list()
 
-                stocks.append({'symbol': full_symbol, 'code': symbol, 'name': name})
+    def fetch_daily_data_with_date_range(self, code, market, start_date, end_date):
+        """
+        使用注入的服务获取指定日期范围的日线数据
 
-            logger.info(f"Found {len(stocks)} A-share stocks.")
-            return stocks
-        except Exception as e:
-            logger.error(f"Error fetching stock list: {e}")
-            return []
+        Args:
+            code (str): 股票代码
+            market (int): 市场代码 (0: 深圳, 1: 上海)
+            start_date (str): 开始日期，格式 'YYYYMMDD'
+            end_date (str): 结束日期，格式 'YYYYMMDD'
 
-    def fetch_daily_pytdx_with_date_range(self, code, market, start_date, end_date):
-        """Fetch daily data using Thread-Local PyTDX with specific date range."""
-        api = get_thread_api()
-        if not api:
-            return None
+        Returns:
+            pd.DataFrame: 包含日线数据的DataFrame，如果获取失败则返回None
+        """
+        return self.data_fetcher_service.fetch_daily_data(code, market, start_date, end_date)
 
-        try:
-            # market: 0 - SZ, 1 - SH
-            # category: 9 - Day
-            # Fetch more bars than needed to ensure we cover the date range
-            data = api.get_security_bars(9, market, code, 0, 400)
-            if not data:
-                return None
-
-            df = api.to_df(data)
-            df['date'] = df['datetime'].apply(lambda x: x[:10].replace('-', ''))
-            df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-
-            if df.empty:
-                return pd.DataFrame()
-
-            df = df.rename(columns={'vol': 'volume'})
-            return df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']]
-
-        except Exception as e:
-            return None
-
+    @retry_with_backoff(max_retries=2, base_delay=1, max_delay=10)
     def fetch_daily_akshare_with_date_range(self, code, symbol, start_date, end_date):
-        """Fetch daily data using AkShare (fallback) with specific date range."""
+        """
+        使用AkShare获取指定日期范围的日线数据（备用方法）
+
+        Args:
+            code (str): 股票代码
+            symbol (str): 股票代码（带交易所后缀）
+            start_date (str): 开始日期，格式 'YYYYMMDD'
+            end_date (str): 结束日期，格式 'YYYYMMDD'
+
+        Returns:
+            pd.DataFrame: 包含日线数据的DataFrame，如果获取失败则返回空DataFrame
+        """
         try:
             # AkShare is HTTP based, thread-safe usually
             df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
@@ -168,23 +265,29 @@ class DataFetcher:
             df['date'] = df['date'].astype(str).str.replace('-', '')
             return df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']]
         except Exception as e:
-            # logger.error(f"AkShare fetch failed for {code}: {e}")
-            return None
+            logger.error(f"AkShare fetch failed for {code}: {e}")
+            raise  # Re-raise the exception to trigger the retry decorator
 
     def process_stock_with_date_range(self, stock_info, start_date, end_date):
-        """Process a single stock with specified date range."""
+        """
+        处理单个股票在指定日期范围内的数据
+
+        Args:
+            stock_info (dict): 包含股票信息的字典，包含 symbol, code, name 等字段
+            start_date (str): 开始日期，格式 'YYYYMMDD'
+            end_date (str): 结束日期，格式 'YYYYMMDD'
+
+        Returns:
+            pd.DataFrame: 包含股票日线数据的DataFrame，如果获取失败则返回None
+        """
         symbol = stock_info['symbol']
         code = stock_info['code']
         name = stock_info['name']
 
         market = 1 if symbol.endswith('.SH') else 0
 
-        # Try PyTDX
-        df = self.fetch_daily_pytdx_with_date_range(code, market, start_date, end_date)
-
-        # Fallback to AkShare
-        if df is None or df.empty:
-            df = self.fetch_daily_akshare_with_date_range(code, symbol, start_date, end_date)
+        # Use the composite fetcher which handles both PyTDX and AkShare
+        df = self.fetch_daily_data_with_date_range(code, market, start_date, end_date)
 
         if df is not None and not df.empty:
             df['symbol'] = symbol
@@ -294,17 +397,39 @@ class DataFetcher:
             for col in numeric_cols:
                 new_data_df[col] = pd.to_numeric(new_data_df[col], errors='coerce')
 
+            # Validate the new data before processing
+            is_valid, validation_report = validate_stock_data(new_data_df)
+            if not is_valid:
+                logger.warning(f"新获取的数据验证失败: {validation_report}")
+                # Optionally, we could filter out invalid data or stop processing
+                # For now, we'll continue but log the issues
+            else:
+                logger.info(f"新获取的 {len(new_data_df)} 条数据验证通过")
+
             # If incremental mode and file exists, combine with existing data
             if incremental and os.path.exists(self.output_file):
                 logger.info("Loading existing data to combine with new data...")
                 try:
                     existing_df = pd.read_parquet(self.output_file)
+                    # Validate existing data
+                    is_valid_existing, validation_report_existing = validate_stock_data(existing_df)
+                    if not is_valid_existing:
+                        logger.warning(f"现有数据验证失败: {validation_report_existing}")
+
                     # Combine existing and new data
                     combined_df = pd.concat([existing_df, new_data_df], ignore_index=True)
                     # Remove duplicates based on date and symbol
                     combined_df = combined_df.drop_duplicates(subset=['date', 'symbol'], keep='last')
                     # Sort by date and symbol for consistency
                     combined_df = combined_df.sort_values(['symbol', 'date']).reset_index(drop=True)
+
+                    # Validate combined data
+                    is_valid_combined, validation_report_combined = validate_stock_data(combined_df)
+                    if not is_valid_combined:
+                        logger.warning(f"合并后的数据验证失败: {validation_report_combined}")
+                    else:
+                        logger.info(f"合并后的 {len(combined_df)} 条数据验证通过")
+
                     final_df = combined_df
                     logger.info(f"Combined {len(existing_df)} existing rows with {len(new_data_df)} new rows, total {len(final_df)} rows after deduplication")
                 except Exception as e:
@@ -313,25 +438,60 @@ class DataFetcher:
             else:
                 final_df = new_data_df
 
-            final_df.to_parquet(self.output_file, index=False)
-            logger.info(f"Saved {len(final_df)} rows to {self.output_file}")
+            # Add error handling for saving the parquet file
+            try:
+                # Save using the storage service which includes backup functionality
+                self.data_storage.save(final_df, self.output_file)
+                logger.info(f"Saved {len(final_df)} rows to {self.output_file}")
+            except Exception as e:
+                logger.error(f"Error saving data to {self.output_file}: {e}")
+                # Try to save to a backup file
+                backup_file = self.output_file.replace('.parquet', '_backup.parquet')
+                try:
+                    final_df.to_parquet(backup_file, index=False)
+                    logger.info(f"Saved data to backup file: {backup_file}")
+                except Exception as backup_error:
+                    logger.error(f"Error saving to backup file: {backup_error}")
         else:
             logger.info("No new data fetched.")
 
 
 class Analyzer:
-    def __init__(self, input_file: str = DEFAULT_OUTPUT_FILE, output_ladder: str = os.path.join('data', 'limit_up_ladder.parquet'), output_promotion: str = os.path.join('data', 'promotion_rates.csv')):
+    def __init__(self, input_file: str = DEFAULT_OUTPUT_FILE, output_ladder: str = config.DEFAULT_LADDER_FILE, output_promotion: str = config.DEFAULT_PROMOTION_FILE,
+                 data_validator=None, data_storage=None):
         self.input_file = input_file
         self.output_ladder = output_ladder
         self.output_promotion = output_promotion
         self.df = None
         self.concepts_cache = {}
+        self.data_validator = data_validator or container.get('data_validator')
+        self.data_storage = data_storage or container.get('data_storage')
 
-    def load_data(self):
+    def load_data(self, chunk_size=None):
+        """
+        加载数据，支持可选的分块加载以优化内存使用。
+
+        Args:
+            chunk_size (int, optional): 每次加载的行数。如果为None，则加载所有数据。
+
+        Returns:
+            bool: 加载成功返回True，失败返回False
+        """
         if not os.path.exists(self.input_file):
             logger.error(f"Input file {self.input_file} not found.")
             return False
-        self.df = pd.read_parquet(self.input_file)
+
+        if chunk_size:
+            # Process data in chunks to reduce memory usage
+            logger.info(f"Loading data in chunks of {chunk_size} rows...")
+            chunks = pd.read_parquet(self.input_file, chunksize=chunk_size)
+            data_frames = []
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Processing chunk {i+1}...")
+                data_frames.append(chunk)
+            self.df = pd.concat(data_frames, ignore_index=True)
+        else:
+            self.df = pd.read_parquet(self.input_file)
         return True
 
     def calculate_limit_price(self, row, prev_close):
@@ -448,8 +608,40 @@ class Analyzer:
 
         self.df.update(limit_ups)
 
-    def process(self):
-        if not self.load_data():
+    def validate_processed_data(self):
+        """
+        验证处理后的数据
+        """
+        validation_report = []
+
+        # 检查涨停识别的合理性
+        limit_up_stocks = self.df[self.df['is_limit_up'] == True]
+        if len(limit_up_stocks) > 0:
+            # 检查涨停价格计算是否合理
+            invalid_limit_prices = limit_up_stocks[
+                (limit_up_stocks['close'] < limit_up_stocks['limit_price'] - 0.01) |
+                (limit_up_stocks['close'] > limit_up_stocks['limit_price'] + 0.01)
+            ]
+            if len(invalid_limit_prices) > 0:
+                validation_report.append(f"涨停价格计算异常: {len(invalid_limit_prices)} 条记录")
+
+        # 检查连续涨停天数的合理性
+        consecutive_limit_ups = self.df[self.df['consecutive_limit_up_days'] > 0]
+        if len(consecutive_limit_ups) > 0:
+            max_consecutive = consecutive_limit_ups['consecutive_limit_up_days'].max()
+            if max_consecutive > 20:  # 一般连续涨停不会超过20天
+                validation_report.append(f"连续涨停天数异常: 最大值为 {max_consecutive} 天")
+
+        return len(validation_report) == 0, validation_report
+
+    def process(self, chunk_size=None):
+        """
+        执行完整的数据分析流程，包括涨停识别、连续涨停天数计算、板块类型识别等
+
+        Args:
+            chunk_size (int, optional): 数据分块大小，用于内存优化
+        """
+        if not self.load_data(chunk_size=chunk_size):
             return
 
         self.identify_limit_ups()
@@ -472,7 +664,7 @@ class Analyzer:
 
         # Use ThreadPoolExecutor to fetch concepts in parallel
         concept_map = {}
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=config.CONCEPT_FETCH_WORKERS) as executor:
             futures = {executor.submit(fetch_concept_for_stock, symbol): symbol for symbol in unique_symbols}
             for i, future in enumerate(as_completed(futures)):
                 symbol, concepts = future.result()
@@ -483,9 +675,16 @@ class Analyzer:
         # Map concepts back to ladder_df
         ladder_df['concept_themes'] = ladder_df['symbol'].map(concept_map)
 
-        # Save Ladder
-        ladder_df.to_parquet(self.output_ladder, index=False)
+        # Save Ladder using injected storage service
+        self.data_storage.save(ladder_df, self.output_ladder)
         logger.info(f"Saved ladder data to {self.output_ladder}")
+
+        # Validate processed data
+        is_valid, validation_report = self.validate_processed_data()
+        if not is_valid:
+            logger.warning(f"数据验证发现问题: {validation_report}")
+        else:
+            logger.info("数据验证通过")
 
         # Calculate Promotion Rates
         # Group by date + consecutive_days
@@ -534,19 +733,21 @@ class Analyzer:
                     'promotion_rate': rate
                 })
 
-        stats_df = pd.DataFrame(stats)
-        stats_df.to_csv(self.output_promotion, index=False)
+        # Save promotion rates using injected storage service
+        self.data_storage.save(stats_df, self.output_promotion)
         logger.info(f"Saved promotion rates to {self.output_promotion}")
 
 
-def generate_ladder_data_for_html(ladder_file: str = os.path.join('data','limit_up_ladder.parquet'), output_file: str = os.path.join('data','ladder_data.js')):
+def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE, output_file: str = config.DEFAULT_LADDER_JS_FILE, chunk_size: int = config.CHUNK_SIZE):
     """Generate ladder data for HTML visualization."""
     # Load the ladder data
     if not os.path.exists(ladder_file):
         print(f"{ladder_file} not found!")
         return
 
-    df = pd.read_parquet(ladder_file)
+    # Process data in chunks to reduce memory usage
+    chunks = pd.read_parquet(ladder_file, chunksize=chunk_size)
+    df = pd.concat(chunks, ignore_index=True)
 
     # Get all unique dates
     unique_dates = sorted(df['date'].unique(), reverse=True)
@@ -574,7 +775,7 @@ def generate_ladder_data_for_html(ladder_file: str = os.path.join('data','limit_
                     concepts = concepts.tolist()
                 elif not isinstance(concepts, list):
                     concepts = list(concepts) if concepts else []
-                
+
                 formatted_data[level].append({
                     'code': stock['symbol'],
                     'name': stock['name'],
@@ -587,7 +788,7 @@ def generate_ladder_data_for_html(ladder_file: str = os.path.join('data','limit_
 
     # Save as JS file that can be loaded by the HTML
     js_content = f"// 自动生成的连板数据文件\nwindow.LADDER_DATA = {json.dumps(all_dates_data, ensure_ascii=False)};"
-    
+
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(js_content)
 
@@ -607,13 +808,15 @@ def generate_ladder_data_for_html(ladder_file: str = os.path.join('data','limit_
 
 
 
-def generate_kline_data(input_file: str = os.path.join('data','stock_daily_latest.parquet'), output_file: str = os.path.join('data','kline_data.js')):
+def generate_kline_data(input_file: str = config.DEFAULT_OUTPUT_FILE, output_file: str = config.DEFAULT_KLINE_JS_FILE, chunk_size: int = config.CHUNK_SIZE):
     """Generate K-line JS data file for HTML visualization."""
     if not os.path.exists(input_file):
         print(f"{input_file} not found!")
         return
 
-    df = pd.read_parquet(input_file)
+    # Process data in chunks to reduce memory usage
+    chunks = pd.read_parquet(input_file, chunksize=chunk_size)
+    df = pd.concat(chunks, ignore_index=True)
     df_sorted = df.sort_values(['symbol', 'date'])
     df_sorted['date_formatted'] = pd.to_datetime(df_sorted['date'], format='%Y%m%d', errors='coerce').dt.strftime('%Y-%m-%d')
     grouped = df_sorted.groupby('symbol')
@@ -633,14 +836,15 @@ def generate_kline_data(input_file: str = os.path.join('data','stock_daily_lates
 
 def main():
     parser = argparse.ArgumentParser(description='A股连板分析工具 - 统一入口')
-    parser.add_argument('command', choices=['fetch', 'analyze', 'generate-ladder', 'generate-kline', 'visualize', 'full'], 
-                        help='执行的命令: fetch(获取数据), analyze(分析数据), generate-ladder(生成阶梯数据), generate-kline(生成K线数据JS), visualize(生成可视化), full(完整流程)')
+    parser.add_argument('command', choices=['fetch', 'analyze', 'generate-ladder', 'generate-kline', 'full'],
+                        help='执行的命令: fetch(获取数据), analyze(分析数据), generate-ladder(生成阶梯数据), generate-kline(生成K线数据JS), full(完整流程)')
     parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD')
     parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD')
-    parser.add_argument('--input-file', type=str, default=DEFAULT_OUTPUT_FILE, help='输入文件')
+    parser.add_argument('--input-file', type=str, default=config.DEFAULT_OUTPUT_FILE, help='输入文件')
     parser.add_argument('--output-file', type=str, help='输出文件名')
     parser.add_argument('--incremental', action='store_true', default=True, help='是否增量更新')
     parser.add_argument('--full-refresh', action='store_true', help='完全刷新模式')
+    parser.add_argument('--chunk-size', type=int, default=config.CHUNK_SIZE, help='数据处理块大小，用于内存优化')
 
     args = parser.parse_args()
 
@@ -648,10 +852,10 @@ def main():
     if args.output_file:
         output_file = args.output_file
     else:
-        output_file = DEFAULT_OUTPUT_FILE  # Use the default file name 'stock_daily_latest.parquet'
+        output_file = config.DEFAULT_OUTPUT_FILE  # Use the default file name 'stock_daily_latest.parquet'
 
     if args.command == 'fetch':
-        fetcher = DataFetcher(output_file=output_file)
+        fetcher = DataFetcher(output_file=output_file, data_storage=container.get('data_storage'))
         fetcher.run(
             start_date=args.start_date,
             end_date=args.end_date,
@@ -659,20 +863,18 @@ def main():
         )
     elif args.command == 'analyze':
         analyzer = Analyzer(input_file=args.input_file)
-        analyzer.process()
+        analyzer.process(chunk_size=args.chunk_size)
     elif args.command == 'generate-ladder':
-        generate_ladder_data_for_html()
-    elif args.command == 'visualize':
-        generate_html()
+        generate_ladder_data_for_html(chunk_size=args.chunk_size)
     elif args.command == 'generate-kline':
-        out_js = args.output_file if args.output_file else os.path.join('data','kline_data.js')
-        generate_kline_data(input_file=args.input_file, output_file=out_js)
+        out_js = args.output_file if args.output_file else config.DEFAULT_KLINE_JS_FILE
+        generate_kline_data(input_file=args.input_file, output_file=out_js, chunk_size=args.chunk_size)
     elif args.command == 'full':
         # 执行完整流程
         logger.info("开始执行完整分析流程...")
         
         # 1. 获取数据
-        fetcher = DataFetcher(output_file=output_file)
+        fetcher = DataFetcher(output_file=output_file, data_storage=container.get('data_storage'))
         fetcher.run(
             start_date=args.start_date,
             end_date=args.end_date,
@@ -681,16 +883,24 @@ def main():
         
         # 2. 分析数据
         analyzer = Analyzer(input_file=output_file)
-        analyzer.process()
-        
+        analyzer.process(chunk_size=args.chunk_size)
+
         # 3. 生成阶梯数据
-        generate_ladder_data_for_html()
-        
-        # 4. 生成可视化
-        generate_html()
+        generate_ladder_data_for_html(chunk_size=args.chunk_size)
         
         logger.info("完整分析流程完成！")
 
 
+def save_monitoring_metrics():
+    """保存监控指标"""
+    try:
+        monitoring_manager.save_metrics()
+        logger.info("已保存监控指标")
+    except Exception as e:
+        logger.error(f"保存监控指标失败: {e}")
+
+
 if __name__ == "__main__":
     main()
+    # 保存监控指标
+    save_monitoring_metrics()

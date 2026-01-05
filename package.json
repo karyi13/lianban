@@ -1,0 +1,19 @@
+{
+  "name": "a-share-limit-up-analyzer",
+  "version": "1.0.0",
+  "description": "A股连板分析工具 - 用于分析A股市场连续涨停股票的可视化工具",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Build step not required for static site'",
+    "start": "echo 'Use vercel dev to run locally'"
+  },
+  "keywords": [
+    "a-share",
+    "stock-analysis",
+    "limit-up",
+    "visualization",
+    "china-stocks"
+  ],
+  "author": "A股连板分析工具",
+  "license": "MIT"
+}
