@@ -310,6 +310,11 @@ class DataFetcher:
             df['date'] = df['date'].astype(str)
             min_date = df['date'].min()
             max_date = df['date'].max()
+
+            # Ensure dates are in YYYYMMDD format
+            min_date = min_date.replace('-', '').replace('/', '').replace('.', '')
+            max_date = max_date.replace('-', '').replace('/', '').replace('.', '')
+
             return min_date, max_date
         except Exception as e:
             logger.error(f"Error reading existing data: {e}")
@@ -481,17 +486,9 @@ class Analyzer:
             logger.error(f"Input file {self.input_file} not found.")
             return False
 
-        if chunk_size:
-            # Process data in chunks to reduce memory usage
-            logger.info(f"Loading data in chunks of {chunk_size} rows...")
-            chunks = pd.read_parquet(self.input_file, chunksize=chunk_size)
-            data_frames = []
-            for i, chunk in enumerate(chunks):
-                logger.info(f"Processing chunk {i+1}...")
-                data_frames.append(chunk)
-            self.df = pd.concat(data_frames, ignore_index=True)
-        else:
-            self.df = pd.read_parquet(self.input_file)
+        # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
+        # 如果需要处理大文件，可以考虑其他方案
+        self.df = pd.read_parquet(self.input_file)
         return True
 
     def calculate_limit_price(self, row, prev_close):
@@ -733,7 +730,8 @@ class Analyzer:
                     'promotion_rate': rate
                 })
 
-        # Save promotion rates using injected storage service
+        # Convert stats list to DataFrame and save promotion rates using injected storage service
+        stats_df = pd.DataFrame(stats)
         self.data_storage.save(stats_df, self.output_promotion)
         logger.info(f"Saved promotion rates to {self.output_promotion}")
 
@@ -745,9 +743,8 @@ def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE,
         print(f"{ladder_file} not found!")
         return
 
-    # Process data in chunks to reduce memory usage
-    chunks = pd.read_parquet(ladder_file, chunksize=chunk_size)
-    df = pd.concat(chunks, ignore_index=True)
+    # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
+    df = pd.read_parquet(ladder_file)
 
     # Get all unique dates
     unique_dates = sorted(df['date'].unique(), reverse=True)
@@ -784,7 +781,9 @@ def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE,
                     'conceptThemes': concepts
                 })
 
-        all_dates_data[str(date)] = formatted_data
+        # 将日期格式化为 YYYYMMDD 格式，与前端期望的格式一致
+        date_str = pd.to_datetime(date).strftime('%Y%m%d')
+        all_dates_data[date_str] = formatted_data
 
     # Save as JS file that can be loaded by the HTML
     js_content = f"// 自动生成的连板数据文件\nwindow.LADDER_DATA = {json.dumps(all_dates_data, ensure_ascii=False)};"
@@ -814,9 +813,8 @@ def generate_kline_data(input_file: str = config.DEFAULT_OUTPUT_FILE, output_fil
         print(f"{input_file} not found!")
         return
 
-    # Process data in chunks to reduce memory usage
-    chunks = pd.read_parquet(input_file, chunksize=chunk_size)
-    df = pd.concat(chunks, ignore_index=True)
+    # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
+    df = pd.read_parquet(input_file)
     df_sorted = df.sort_values(['symbol', 'date'])
     df_sorted['date_formatted'] = pd.to_datetime(df_sorted['date'], format='%Y%m%d', errors='coerce').dt.strftime('%Y-%m-%d')
     grouped = df_sorted.groupby('symbol')
