@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>连板天梯图</title>
+    <!-- 引入 ECharts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .date-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .filter-options {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        label {
+            font-weight: bold;
+            color: #555;
+            font-size: 1.1em;
+        }
+
+        input[type="date"] {
+            padding: 10px 15px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            background-color: white;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .nav-btn {
+            padding: 10px 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        }
+
+        .nav-btn:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 18px;
+            color: #666;
+        }
+
+        .ladder-container, .concept-container {
+            margin-top: 20px;
+        }
+
+        .ladder-group, .concept-group {
+            margin-bottom: 25px;
+            padding: 20px;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            border-left: 5px solid;
+        }
+
+        .ladder-title, .concept-title {
+            font-size: 1.4em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        .stocks-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .stock-item {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.95em;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+
+        .stock-item:hover {
+            transform: scale(1.05);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        }
+
+        .ladder-group.level-1, .concept-group.concept-1 {
+            border-left-color: #e74c3c;
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+        }
+
+        .ladder-group.level-1 .ladder-title, .concept-group.concept-1 .concept-title {
+            color: #c0392b;
+        }
+
+        .ladder-group.level-2, .concept-group.concept-2 {
+            border-left-color: #e67e22;
+            background: linear-gradient(135deg, #fad0c4 0%, #ffd1ff 100%);
+        }
+
+        .ladder-group.level-2 .ladder-title, .concept-group.concept-2 .concept-title {
+            color: #d35400;
+        }
+
+        .ladder-group.level-3, .concept-group.concept-3 {
+            border-left-color: #f39c12;
+            background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+        }
+
+        .ladder-group.level-3 .ladder-title, .concept-group.concept-3 .concept-title {
+            color: #f39c12;
+        }
+
+        .ladder-group.level-4, .concept-group.concept-4 {
+            border-left-color: #27ae60;
+            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
+        }
+
+        .ladder-group.level-4 .ladder-title, .concept-group.concept-4 .concept-title {
+            color: #27ae60;
+        }
+
+        .ladder-group.level-5, .concept-group.concept-5 {
+            border-left-color: #9b59b6;
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+        }
+
+        .ladder-group.level-5 .ladder-title, .concept-group.concept-5 .concept-title {
+            color: #8e44ad;
+        }
+
+        .ladder-group.level-6, .concept-group.concept-6 {
+            border-left-color: #3498db;
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+        }
+
+        .ladder-group.level-6 .ladder-title, .concept-group.concept-6 .concept-title {
+            color: #2980b9;
+        }
+
+        .ladder-group.level-7, .concept-group.concept-7 {
+            border-left-color: #1abc9c;
+            background: linear-gradient(135deg, #a6c0fe 0%, #f68084 100%);
+        }
+
+        .ladder-group.level-7 .ladder-title, .concept-group.concept-7 .concept-title {
+            color: #16a085;
+        }
+
+        .ladder-group.level-8, .concept-group.concept-8 {
+            border-left-color: #e74c3c;
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+        }
+
+        .ladder-group.level-8 .ladder-title, .concept-group.concept-8 .concept-title {
+            color: #c0392b;
+        }
+
+        .ladder-group.level-9, .concept-group.concept-9 {
+            border-left-color: #e67e22;
+            background: linear-gradient(135deg, #fad0c4 0%, #ffd1ff 100%);
+        }
+
+        .ladder-group.level-9 .ladder-title, .concept-group.concept-9 .concept-title {
+            color: #d35400;
+        }
+
+        .ladder-group.level-10, .concept-group.concept-10 {
+            border-left-color: #f39c12;
+            background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+        }
+
+        .ladder-group.level-10 .ladder-title, .concept-group.concept-10 .concept-title {
+            color: #f39c12;
+        }
+
+        .ladder-group.level-11, .concept-group.concept-11 {
+            border-left-color: #27ae60;
+            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
+        }
+
+        .ladder-group.level-11 .ladder-title, .concept-group.concept-11 .concept-title {
+            color: #27ae60;
+        }
+
+        .ladder-group.level-12, .concept-group.concept-12 {
+            border-left-color: #34495e;
+            background: linear-gradient(135deg, #c2e9fb 0%, #a1c4fd 100%);
+        }
+
+        .ladder-group.level-12 .ladder-title, .concept-group.concept-12 .concept-title {
+            color: #2c3e50;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+            font-size: 18px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+
+        /* 模态框样式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 1000px;
+            height: 600px;
+            position: relative;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .close-btn {
+            position: absolute;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        .close-btn:hover {
+            color: black;
+        }
+
+        .kline-nav {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+        
+        .kline-nav button {
+            padding: 6px 12px;
+            cursor: pointer;
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .kline-nav button:hover:not(:disabled) {
+            background-color: #1976d2;
+        }
+        
+        .kline-nav button:disabled {
+            background-color: #bdbdbd;
+            cursor: not-allowed;
+        }
+        
+        .kline-nav span {
+            font-size: 14px;
+            color: #666;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        #klineChart {
+            width: 100%;
+            height: 100%;
+        }
+
+        .stock-item {
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        
+        .stock-item:hover {
+            transform: scale(1.05);
+            background-color: #ecf0f1;
+        }
+
+        .error {
+            color: #e74c3c;
+            text-align: center;
+            padding: 20px;
+            font-size: 18px;
+            background: #ffeaea;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            text-align: center;
+            min-width: 150px;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .stats {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .stat-item {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📈 连板天梯图</h1>
+
+        <div class="controls">
+            <div class="nav-buttons">
+                <button id="prevDayBtn" class="nav-btn">⬅️ 上一日</button>
+                <button id="nextDayBtn" class="nav-btn">下一日 ➡️</button>
+            </div>
+            <div class="date-selector">
+                <label for="datePicker">📅 选择日期:</label>
+                <input type="date" id="datePicker" value="">
+            </div>
+            <div class="filter-options">
+                <label>过滤选项:</label>
+                <label><input type="checkbox" id="filterST"> 过滤ST</label>
+                <label><input type="checkbox" id="filterChiNext"> 过滤创业板</label>
+                <label><input type="checkbox" id="filterMainBoard"> 过滤主板</label>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">🔄 正在加载数据...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="statsContainer" style="display: none;">
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-number" id="totalStocks">0</div>
+                    <div class="stat-label">总连板股数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="highestLevel">0</div>
+                    <div class="stat-label">最高连板数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="limitUpCount">0</div>
+                    <div class="stat-label">涨停股数</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="ladderContainer" class="ladder-container"></div>
+        
+        <div id="conceptContainer" class="concept-container"></div>
+    </div>
+    <div id="klineModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="closeModal">&times;</span>
+            <div class="kline-nav">
+                <button id="prevStockBtn">← 上一个</button>
+                <span id="stockCounter"></span>
+                <button id="nextStockBtn">下一个 →</button>
+            </div>
+            <div id="klineChart"></div>
+        </div>
+    </div>
+
+    <!-- 从 data 目录加载 K线和连板数据 JS -->
+        <script src="data/kline_data.js"></script>
+        <script src="data/ladder_data.js"></script>
+
+    <script>
+        // 获取当前日期并设置为默认值
+        const today = new Date();
+        const formattedDate = today.toISOString().split('T')[0];
+        document.getElementById('datePicker').value = formattedDate;
+        
+        // 当前展示的股票列表和当前选中索引
+        let currentAllStocks = [];
+        let currentStockIndex = -1;
+        
+        // 嵌入实际数据
+        // 数据已移至 ladder_data.js，通过 window.LADDER_DATA 获取
+        let actualData = window.LADDER_DATA || {};
+        if (Object.keys(actualData).length === 0) console.warn("警告: 未加载到连板数据");
+
+        // 覆盖 actualData 以优先使用 data/ladder_data.js 中的数据
+        try { actualData = window.LADDER_DATA && Object.keys(window.LADDER_DATA).length ? window.LADDER_DATA : actualData; } catch (e) {}
+        // 获取所有可用的交易日
+        const availableTradingDays = Object.keys(actualData).sort().reverse();
+        const minDate = availableTradingDays[availableTradingDays.length - 1];
+        const maxDate = availableTradingDays[0];
+        
+        // 设置日期选择器的最小和最大值
+        document.getElementById('datePicker').min = minDate.substring(0, 4) + '-' + minDate.substring(4, 6) + '-' + minDate.substring(6, 8);
+        document.getElementById('datePicker').max = maxDate.substring(0, 4) + '-' + maxDate.substring(4, 6) + '-' + maxDate.substring(6, 8);
+
+        // 格式化日期为 YYYY-MM-DD
+        function formatDate(dateString) {
+            if (dateString.length === 8) {
+                return dateString.substring(0, 4) + '-' + dateString.substring(4, 6) + '-' + dateString.substring(6, 8);
+            }
+            return dateString;
+        }
+
+        // 格式化日期为 YYYYMMDD
+        function formatToYYYYMMDD(dateString) {
+            if (dateString.length === 10) { // YYYY-MM-DD
+                return dateString.replace(/-/g, '');
+            }
+            return dateString;
+        }
+        
+        // 股票属性判断
+        function isSTStock(name) {
+            return /^\*?ST/.test(name || '');
+        }
+        function isChiNext(code) {
+            const digits = (code || '').split('.')[0];
+            return digits.startsWith('300') || digits.startsWith('301');
+        }
+        function isMainBoard(code) {
+            const d = (code || '').split('.')[0];
+            return d.startsWith('000') || d.startsWith('001') || d.startsWith('002') ||
+                   d.startsWith('600') || d.startsWith('601') || d.startsWith('603') || d.startsWith('605');
+        }
+
+        // 加载数据函数
+        function loadData() {
+            const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const ladderContainer = document.getElementById('ladderContainer');
+            const conceptContainer = document.getElementById('conceptContainer');
+            const statsContainer = document.getElementById('statsContainer');
+
+            // 显示加载状态
+            loadingDiv.style.display = 'block';
+            errorDiv.style.display = 'none';
+            ladderContainer.innerHTML = '';
+            conceptContainer.innerHTML = '';
+            statsContainer.style.display = 'none';
+
+            try {
+                // 获取指定日期的数据
+                const dateData = actualData[selectedDate] || {};
+                
+                // 将数据转换为按连板天数分组的格式
+                const stocks = [];
+                for (const [level, stockList] of Object.entries(dateData)) {
+                    stockList.forEach(stock => {
+                        stocks.push({
+                            code: stock.code,
+                            name: stock.name,
+                            price: stock.price,
+                            limitUpDays: stock.limitUpDays,
+                            conceptThemes: stock.conceptThemes
+                        });
+                    });
+                }
+
+                // 读取过滤选项
+                const filterSTChecked = document.getElementById('filterST')?.checked;
+                const filterChiNextChecked = document.getElementById('filterChiNext')?.checked;
+                const filterMainBoardChecked = document.getElementById('filterMainBoard')?.checked;
+                
+                // 应用过滤
+                const filteredStocks = stocks.filter(s => {
+                    if (filterSTChecked && isSTStock(s.name)) return false;
+                    if (filterChiNextChecked && isChiNext(s.code)) return false;
+                    if (filterMainBoardChecked && isMainBoard(s.code)) return false;
+                    return true;
+                });
+
+                if (filteredStocks.length === 0) {
+                    ladderContainer.innerHTML = '<div class="no-data">😔 暂无连板数据</div>';
+                    currentAllStocks = [];
+                } else {
+                    // 排序并保存到全局变量，用于K线切换
+                    // 按连板数降序排序，同板按代码升序
+                    filteredStocks.sort((a, b) => {
+                        if (b.limitUpDays !== a.limitUpDays) {
+                            return b.limitUpDays - a.limitUpDays;
+                        }
+                        return a.code.localeCompare(b.code);
+                    });
+                    currentAllStocks = filteredStocks;
+
+                    renderLadderGroups(filteredStocks);
+                    renderConceptGroups(filteredStocks);
+                    updateStats(filteredStocks);
+                    statsContainer.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '❌ 加载数据失败: ' + error.message;
+                console.error('Error loading data:', error);
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        }
+
+        // 更新统计数据
+        function updateStats(data) {
+            const totalStocks = data.filter(item => item.limitUpDays >= 2).length;
+            const highestLevel = Math.max(...data.map(item => item.limitUpDays));
+            const limitUpCount = data.length;
+
+            document.getElementById('totalStocks').textContent = totalStocks;
+            document.getElementById('highestLevel').textContent = highestLevel;
+            document.getElementById('limitUpCount').textContent = limitUpCount;
+        }
+
+        // 渲染连板分组
+        function renderLadderGroups(data) {
+            const ladderContainer = document.getElementById('ladderContainer');
+
+            // 按连板天数分组
+            const groupedData = {};
+            data.forEach(item => {
+                if (!groupedData[item.limitUpDays]) {
+                    groupedData[item.limitUpDays] = [];
+                }
+                groupedData[item.limitUpDays].push(item);
+            });
+
+            // 按连板天数降序排列
+            const sortedLevels = Object.keys(groupedData)
+                .map(Number)
+                .sort((a, b) => b - a);
+
+            let html = '';
+
+            sortedLevels.forEach(level => {
+                const stocks = groupedData[level];
+                const levelClass = `level-${level}`;
+                
+                html += `
+                    <div class="ladder-group ${levelClass}">
+                        <div class="ladder-title">${level}连板：</div>
+                        <div class="stocks-list">
+                `;
+                
+                stocks.forEach(stock => {
+                    const conceptsText = Array.isArray(stock.conceptThemes) ? stock.conceptThemes.join('、') : (stock.conceptThemes || '');
+                    html += `<div class="stock-item" data-code="${stock.code}" data-name="${stock.name}" title="${stock.code} - ${conceptsText}">${stock.name}</div>`;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            ladderContainer.innerHTML = html;
+        }
+
+        // 渲染概念题材分组
+        function renderConceptGroups(data) {
+            const conceptContainer = document.getElementById('conceptContainer');
+            
+            // 按概念题材分组
+            const conceptGroupedData = {};
+            data.forEach(item => {
+                // 分割概念主题（支持数组或逗号分隔字符串）
+                let themes = [];
+                if (Array.isArray(item.conceptThemes)) {
+                    themes = item.conceptThemes;
+                } else if (typeof item.conceptThemes === 'string') {
+                    themes = item.conceptThemes.split(', ');
+                } else {
+                    themes = ['暂无概念'];
+                }
+                
+                themes.forEach(theme => {
+                    if (!conceptGroupedData[theme]) {
+                        conceptGroupedData[theme] = [];
+                    }
+                    conceptGroupedData[theme].push(item);
+                });
+            });
+
+            // 按股票数量降序排列
+            const sortedConcepts = Object.entries(conceptGroupedData)
+                .sort((a, b) => b[1].length - a[1].length);
+
+            // 过滤不需要的概念（包括TBD、暂无概念以及昨日涨停/连板等技术性标签）
+            const ignoredConcepts = [
+                'TBD', '暂无概念',
+                '融资融券', '机构重仓', '深股通', '沪股通', 
+                '富时罗素', '标准普尔', 'MSCI中国', 
+                '参股新三板', '转债标的', 'ST股'
+            ];
+            
+            // 只取前5个核心概念
+            const topConcepts = sortedConcepts.filter(([theme]) => {
+                if (ignoredConcepts.includes(theme)) return false;
+                if (theme.startsWith('昨日')) return false; // 过滤所有以"昨日"开头的概念
+                if (theme.includes('中报') || theme.includes('年报') || theme.includes('季报')) return false; // 过滤业绩报告类
+                return true;
+            }).slice(0, 5);
+
+            let html = '<h2 style="color: #2c3e50; margin-top: 40px;">💡 核心题材概念 (Top 5)</h2>';
+            
+            // 如果没有数据
+            if (topConcepts.length === 0) {
+                 html += '<div class="no-data">暂无核心概念数据</div>';
+            } else {
+                topConcepts.forEach(([theme, stocks], index) => {
+                    const conceptClass = `concept-${(index % 12) + 1}`; // 循环使用12种颜色
+                    
+                    // 按连板数降序排序
+                    stocks.sort((a, b) => b.limitUpDays - a.limitUpDays);
+                    
+                    html += `
+                        <div class="concept-group ${conceptClass}">
+                            <div class="concept-title">${theme}（${stocks.length}只）：</div>
+                            <div class="stocks-list">
+                    `;
+                    
+                stocks.forEach(stock => {
+                    html += `<div class="stock-item" data-code="${stock.code}" data-name="${stock.name}" title="${stock.limitUpDays}连板">${stock.name}（${stock.limitUpDays}板）</div>`;
+                });
+                    
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            conceptContainer.innerHTML = html;
+        }
+
+        // 获取下一个交易日
+        function getNextTradingDay(currentDate) {
+            const currentIndex = availableTradingDays.indexOf(formatToYYYYMMDD(currentDate));
+            if (currentIndex > 0) {
+                const nextDay = availableTradingDays[currentIndex - 1];
+                return nextDay.substring(0, 4) + '-' + nextDay.substring(4, 6) + '-' + nextDay.substring(6, 8);
+            }
+            return null;
+        }
+
+        // 获取上一个交易日
+        function getPrevTradingDay(currentDate) {
+            const currentIndex = availableTradingDays.indexOf(formatToYYYYMMDD(currentDate));
+            if (currentIndex < availableTradingDays.length - 1) {
+                const prevDay = availableTradingDays[currentIndex + 1];
+                return prevDay.substring(0, 4) + '-' + prevDay.substring(4, 6) + '-' + prevDay.substring(6, 8);
+            }
+            return null;
+        }
+
+        // 更新按钮状态
+        function updateButtonStates() {
+            const currentDate = document.getElementById('datePicker').value;
+            const prevBtn = document.getElementById('prevDayBtn');
+            const nextBtn = document.getElementById('nextDayBtn');
+            
+            // 检查是否有上一个交易日
+            const hasPrevDay = getPrevTradingDay(currentDate) !== null;
+            prevBtn.disabled = !hasPrevDay;
+            
+            // 检查是否有下一个交易日
+            const hasNextDay = getNextTradingDay(currentDate) !== null;
+            nextBtn.disabled = !hasNextDay;
+        }
+
+        // 日期选择器变化事件监听器 - 自动加载数据
+        document.getElementById('datePicker').addEventListener('change', function() {
+            loadData();
+            updateButtonStates();
+        });
+
+        // 上一日按钮事件监听器
+        document.getElementById('prevDayBtn').addEventListener('click', function() {
+            const currentDate = document.getElementById('datePicker').value;
+            const prevDay = getPrevTradingDay(currentDate);
+            if (prevDay) {
+                document.getElementById('datePicker').value = prevDay;
+                loadData();
+                updateButtonStates();
+            }
+        });
+
+        // 下一日按钮事件监听器
+        document.getElementById('nextDayBtn').addEventListener('click', function() {
+            const currentDate = document.getElementById('datePicker').value;
+            const nextDay = getNextTradingDay(currentDate);
+            if (nextDay) {
+                document.getElementById('datePicker').value = nextDay;
+                loadData();
+                updateButtonStates();
+            }
+        });
+        
+        // 过滤选项事件监听
+        const filterSTEl = document.getElementById('filterST');
+        const filterChiNextEl = document.getElementById('filterChiNext');
+        const filterMainBoardEl = document.getElementById('filterMainBoard');
+        [filterSTEl, filterChiNextEl, filterMainBoardEl].forEach(el => {
+            el && el.addEventListener('change', () => {
+                loadData();
+                updateButtonStates();
+            });
+        });
+
+        // 回车键支持
+        document.getElementById('datePicker').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                loadData();
+            }
+        });
+
+        // 页面加载时自动加载数据
+        window.addEventListener('load', function() {
+            // 初始化按钮状态
+            updateButtonStates();
+            loadData();
+        });
+        
+        // 代码与市场映射
+        function codeToSecid(code) {
+            const clean = code.replace(/\\D/g, '');
+            const isSH = code.endsWith('.SH') || clean.startsWith('6') || clean.startsWith('9');
+            return (isSH ? '1.' : '0.') + clean;
+        }
+        
+        // 获取所选日期 (YYYY-MM-DD)
+        function getSelectedDateISO() {
+            return document.getElementById('datePicker').value;
+        }
+        
+        // 获取每日K线数据
+        async function fetchKlineDaily(code) {
+            // 从全局变量获取数据 (kline_data.js)
+            const globalData = window.KLINE_DATA_GLOBAL;
+            
+            if (!globalData) {
+                console.error('K-line data not loaded yet.');
+                return { dates: [], values: [], volumes: [] };
+            }
+
+            // 尝试直接匹配
+            let stockData = globalData[code];
+            
+            // 如果未找到，尝试去除后缀匹配 (e.g. 000547.SZ -> 000547)
+            if (!stockData && code.includes('.')) {
+                const codeNoSuffix = code.split('.')[0];
+                stockData = globalData[codeNoSuffix];
+            }
+            
+            if (!stockData) {
+                return { dates: [], values: [], volumes: [] };
+            }
+            return { dates: stockData.dates, values: stockData.values, volumes: stockData.volumes || [] };
+        }
+        
+        // 初始化模态框关闭事件（只需绑定一次）
+        const modal = document.getElementById('klineModal');
+        const closeBtn = document.getElementById('closeModal');
+        
+        if (closeBtn) {
+            closeBtn.onclick = () => { 
+                modal.style.display = 'none'; 
+            };
+        }
+        
+        window.onclick = (event) => {
+            if (event.target === modal) { 
+                modal.style.display = 'none'; 
+            }
+        };
+
+        // 显示K线弹窗
+        async function showKlineModal(code, name) {
+            modal.style.display = 'flex';
+            
+            // 更新当前股票索引
+            if (currentAllStocks.length > 0) {
+                currentStockIndex = currentAllStocks.findIndex(s => s.code === code);
+                updateKlineNavButtons();
+            }
+            
+            const chartDom = document.getElementById('klineChart');
+            let chart = echarts.getInstanceByDom(chartDom);
+            if (!chart) {
+                chart = echarts.init(chartDom);
+            }
+            
+            // 显示加载中
+            chart.showLoading();
+            
+            try {
+                const { dates, values, volumes } = await fetchKlineDaily(code);
+                chart.hideLoading();
+                
+                if (!dates.length) {
+                    chart.clear();
+                    chart.setOption({ title: { text: '暂无K线数据', left: 'center' } });
+                    return;
+                }
+                
+                const selectedISO = getSelectedDateISO(); // YYYY-MM-DD
+                const selectedIdx = dates.indexOf(selectedISO);
+                
+                // 处理数据，高亮选中日期
+                const seriesData = values.map((v, idx) => {
+                    // v 是 [open, close, low, high]
+                    if (idx === selectedIdx && selectedIdx !== -1) {
+                        return {
+                            value: v,
+                            itemStyle: {
+                                color: '#000000',       // 阳线填充色（实心黑）
+                                color0: '#000000',      // 阴线填充色（实心黑）
+                                borderColor: '#000000', // 阳线边框
+                                borderColor0: '#000000' // 阴线边框
+                            }
+                        };
+                    }
+                    return { value: v };
+                });
+                
+                // 处理成交量数据，根据涨跌设置颜色
+                const volumeData = volumes.map((vol, idx) => {
+                    const open = values[idx][0];
+                    const close = values[idx][1];
+                    const color = close >= open ? '#ef5350' : '#26a69a';
+                    return {
+                        value: vol,
+                        itemStyle: { color: color }
+                    };
+                });
+                
+                const total = dates.length;
+                const windowSize = Math.min(80, total); // 可视窗口宽度
+                
+                // 计算起始位置，使选中日期位于右侧1/4处 (即窗口的75%位置)
+                let startIndex;
+                if (selectedIdx === -1) {
+                    startIndex = Math.max(0, total - windowSize);
+                } else {
+                    // 目标：selectedIdx = startIndex + windowSize * 0.75
+                    // startIndex = selectedIdx - windowSize * 0.75
+                    startIndex = Math.floor(selectedIdx - windowSize * 0.75);
+                    startIndex = Math.max(0, Math.min(startIndex, total - windowSize));
+                }
+                
+                let endIndex = Math.min(total - 1, startIndex + windowSize);
+                
+                const startPercent = (startIndex / total) * 100;
+                const endPercent = ((startIndex + windowSize) / total) * 100;
+                
+                const option = {
+                    title: { text: `${name} (${code}) 日K`, left: 'center' },
+                    tooltip: { 
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' }
+                    },
+                    grid: [
+                        {
+                            left: '10%',
+                            right: '10%',
+                            top: '10%',
+                            height: '50%'
+                        },
+                        {
+                            left: '10%',
+                            right: '10%',
+                            top: '65%',
+                            height: '15%'
+                        }
+                    ],
+                    xAxis: [
+                        {
+                            type: 'category', 
+                            data: dates, 
+                            scale: true,
+                            boundaryGap: false,
+                            axisLine: { onZero: false },
+                            splitLine: { show: false },
+                            min: 'dataMin',
+                            max: 'dataMax'
+                        },
+                        {
+                            type: 'category',
+                            gridIndex: 1,
+                            data: dates,
+                            axisLabel: { show: false }
+                        }
+                    ],
+                    yAxis: [
+                        {
+                            scale: true,
+                            splitArea: {
+                                show: true
+                            }
+                        },
+                        {
+                            scale: true,
+                            gridIndex: 1,
+                            splitNumber: 2,
+                            axisLabel: { show: true },
+                            axisLine: { show: true },
+                            splitLine: { show: true }
+                        }
+                    ],
+                    dataZoom: [
+                        {
+                            type: 'inside',
+                            xAxisIndex: [0, 1],
+                            start: startPercent,
+                            end: endPercent
+                        },
+                        {
+                            show: true,
+                            type: 'slider',
+                            xAxisIndex: [0, 1],
+                            top: '90%',
+                            start: startPercent,
+                            end: endPercent
+                        }
+                    ],
+                    series: [
+                        {
+                            name: '日K',
+                            type: 'candlestick',
+                            data: seriesData,
+                            itemStyle: {
+                                color: '#ef5350',       // 阳线颜色
+                                color0: '#26a69a',      // 阴线颜色
+                                borderColor: '#ef5350', // 阳线边框
+                                borderColor0: '#26a69a' // 阴线边框
+                            }
+                        },
+                        {
+                            name: '成交量',
+                            type: 'bar',
+                            xAxisIndex: 1,
+                            yAxisIndex: 1,
+                            data: volumeData
+                        }
+                    ]
+                };
+                
+                chart.setOption(option);
+            } catch (e) {
+                chart.hideLoading();
+                chart.clear();
+                chart.setOption({ title: { text: '加载K线失败', left: 'center' } });
+                console.error(e);
+            }
+        }
+        
+        // 点击股票名称弹出K线
+        document.addEventListener('click', function(e) {
+            const target = e.target.closest('.stock-item');
+            if (!target) return;
+            const code = target.getAttribute('data-code');
+            const name = target.getAttribute('data-name') || '';
+            if (code) {
+                showKlineModal(code, name);
+            }
+        });
+
+        // 更新K线导航按钮状态
+        function updateKlineNavButtons() {
+            const prevBtn = document.getElementById('prevStockBtn');
+            const nextBtn = document.getElementById('nextStockBtn');
+            const counter = document.getElementById('stockCounter');
+            
+            if (currentStockIndex === -1 || currentAllStocks.length === 0) {
+                prevBtn.disabled = true;
+                nextBtn.disabled = true;
+                counter.textContent = '';
+                return;
+            }
+            
+            prevBtn.disabled = currentStockIndex <= 0;
+            nextBtn.disabled = currentStockIndex >= currentAllStocks.length - 1;
+            counter.textContent = `${currentStockIndex + 1} / ${currentAllStocks.length}`;
+        }
+        
+        // K线图切换按钮事件
+        document.getElementById('prevStockBtn').addEventListener('click', function() {
+            if (currentStockIndex > 0) {
+                const prevStock = currentAllStocks[currentStockIndex - 1];
+                showKlineModal(prevStock.code, prevStock.name);
+            }
+        });
+        
+        document.getElementById('nextStockBtn').addEventListener('click', function() {
+            if (currentStockIndex < currentAllStocks.length - 1) {
+                const nextStock = currentAllStocks[currentStockIndex + 1];
+                showKlineModal(nextStock.code, nextStock.name);
+            }
+        });
+    </script>
+</body>
+</html>
