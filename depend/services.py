@@ -314,7 +314,7 @@ class DataValidator:
 class DataStorage:
     """数据存储实现"""
 
-    def save(self, data, file_path: str, create_backup: bool = True):
+    def save(self, data, file_path: str, create_backup: bool = False):
         """保存数据到文件，根据文件扩展名选择格式"""
         # 如果目标文件存在且需要备份，则创建备份
         if create_backup and os.path.exists(file_path):

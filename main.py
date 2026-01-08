@@ -24,6 +24,7 @@ from depend.di_container import container
 from depend.services import CompositeDataFetcher
 from depend.backup_manager import backup_manager
 from depend.monitoring import monitoring_manager
+from utils.logging_utils import StructuredLogger, performance_monitor, log_performance
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -145,6 +146,35 @@ def validate_stock_data(df):
 
     return is_valid, validation_report
 
+def validate_date_format(date_str):
+    """
+    验证日期格式是否为 YYYYMMDD
+
+    Args:
+        date_str (str): 日期字符串
+
+    Returns:
+        bool: 格式正确返回True，否则返回False
+    """
+    if not date_str or not isinstance(date_str, str):
+        return False
+
+    if len(date_str) != 8:
+        return False
+
+    try:
+        # 尝试解析日期
+        year = int(date_str[0:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+
+        # 验证日期是否有效
+        datetime.date(year, month, day)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def get_default_end_date():
     """
     获取默认结束日期，基于当前时间。
@@ -156,21 +186,21 @@ def get_default_end_date():
     """
     now = datetime.datetime.now()
     current_time = now.time()
-    
+
     # Market closes at 15:00
     market_close_time = datetime.time(15, 0, 0)
-    
+
     if current_time >= market_close_time:
         # Market has closed, use today's date
         target_date = now.date()
     else:
         # Market hasn't closed, use yesterday's date
         target_date = now.date() - datetime.timedelta(days=1)
-    
+
     # Skip weekends
     while target_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
         target_date = target_date - datetime.timedelta(days=1)
-    
+
     return target_date.strftime('%Y%m%d')
 
 DEFAULT_END_DATE = get_default_end_date()
@@ -472,6 +502,8 @@ class Analyzer:
         self.data_validator = data_validator or container.get('data_validator')
         self.data_storage = data_storage or container.get('data_storage')
 
+    @log_performance("analyzer_process", {"component": "analyzer"})
+
     def load_data(self, chunk_size=None):
         """
         加载数据，支持可选的分块加载以优化内存使用。
@@ -582,6 +614,21 @@ class Analyzer:
         self.df['consecutive_limit_up_days'] = self.df.groupby(['symbol', 'group']).cumcount() + 1
         self.df.loc[~self.df['is_limit_up'], 'consecutive_limit_up_days'] = 0
 
+    def calculate_next_day_open_change(self):
+        logger.info("Calculating next day opening auction price change...")
+        # Sort by symbol and date to ensure proper chronological order
+        self.df.sort_values(by=['symbol', 'date'], inplace=True)
+
+        # Calculate the next day's opening price change
+        # Group by symbol and shift the 'open' price to align with current day's data
+        self.df['next_day_open'] = self.df.groupby('symbol')['open'].shift(-1)
+        self.df['next_day_open_change_pct'] = (
+            (self.df['next_day_open'] - self.df['close']) / self.df['close'] * 100
+        ).round(2)
+
+        # Fill NaN values with 0 for the last available date for each stock
+        self.df['next_day_open_change_pct'].fillna(0, inplace=True)
+
     def identify_board_type(self):
         logger.info("Identifying board types...")
         # Default empty
@@ -631,6 +678,7 @@ class Analyzer:
 
         return len(validation_report) == 0, validation_report
 
+    @log_performance("analyzer_process", {"component": "analyzer"})
     def process(self, chunk_size=None):
         """
         执行完整的数据分析流程，包括涨停识别、连续涨停天数计算、板块类型识别等
@@ -638,15 +686,53 @@ class Analyzer:
         Args:
             chunk_size (int, optional): 数据分块大小，用于内存优化
         """
+        # Log operation details
+        logger.info("Starting data analysis process", {
+            "input_file": self.input_file,
+            "output_ladder": self.output_ladder,
+            "output_promotion": self.output_promotion,
+            "chunk_size": chunk_size
+        })
+
         if not self.load_data(chunk_size=chunk_size):
             return
 
+        # Time each analysis step
+        timer_id = performance_monitor.start_timer("identify_limit_ups")
         self.identify_limit_ups()
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info("Completed limit up identification", {
+            "duration_seconds": round(duration, 4)
+        })
+
+        timer_id = performance_monitor.start_timer("calculate_consecutive_days")
         self.calculate_consecutive_days()
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info("Completed consecutive days calculation", {
+            "duration_seconds": round(duration, 4)
+        })
+
+        timer_id = performance_monitor.start_timer("calculate_next_day_open_change")
+        self.calculate_next_day_open_change()
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info("Completed next day opening auction price change calculation", {
+            "duration_seconds": round(duration, 4)
+        })
+
+        timer_id = performance_monitor.start_timer("identify_board_type")
         self.identify_board_type()
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info("Completed board type identification", {
+            "duration_seconds": round(duration, 4)
+        })
 
         # Filter for Ladder: consecutive >= 1 (include single-day limit-ups)
+        timer_id = performance_monitor.start_timer("filter_ladder_data")
         ladder_df = self.df[self.df['consecutive_limit_up_days'] >= 1].copy()
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info(f"Filtered ladder data: {len(ladder_df)} records", {
+            "duration_seconds": round(duration, 4)
+        })
 
         # Fetch concepts only for these ladder stocks
         unique_symbols = ladder_df['symbol'].unique()
@@ -660,6 +746,7 @@ class Analyzer:
             return symbol, []
 
         # Use ThreadPoolExecutor to fetch concepts in parallel
+        timer_id = performance_monitor.start_timer("fetch_concepts_parallel")
         concept_map = {}
         with ThreadPoolExecutor(max_workers=config.CONCEPT_FETCH_WORKERS) as executor:
             futures = {executor.submit(fetch_concept_for_stock, symbol): symbol for symbol in unique_symbols}
@@ -669,12 +756,28 @@ class Analyzer:
                 if (i + 1) % 100 == 0:
                     logger.info(f"Fetched concepts for {i + 1}/{len(unique_symbols)} stocks...")
 
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info(f"Completed fetching concepts for {len(concept_map)} stocks", {
+            "duration_seconds": round(duration, 4),
+            "stocks_count": len(concept_map)
+        })
+
         # Map concepts back to ladder_df
+        timer_id = performance_monitor.start_timer("map_concepts_to_dataframe")
         ladder_df['concept_themes'] = ladder_df['symbol'].map(concept_map)
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info("Completed mapping concepts to dataframe", {
+            "duration_seconds": round(duration, 4)
+        })
 
         # Save Ladder using injected storage service
+        timer_id = performance_monitor.start_timer("save_ladder_data")
         self.data_storage.save(ladder_df, self.output_ladder)
-        logger.info(f"Saved ladder data to {self.output_ladder}")
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info(f"Saved ladder data to {self.output_ladder}", {
+            "duration_seconds": round(duration, 4),
+            "records_count": len(ladder_df)
+        })
 
         # Validate processed data
         is_valid, validation_report = self.validate_processed_data()
@@ -687,6 +790,7 @@ class Analyzer:
         # Group by date + consecutive_days
         # For each date D, count(N board).
         # Check date D+1, how many of those stocks became N+1 board.
+        timer_id = performance_monitor.start_timer("calculate_promotion_rates")
 
         stats = []
         dates = sorted(self.df['date'].unique())
@@ -732,33 +836,91 @@ class Analyzer:
 
         # Convert stats list to DataFrame and save promotion rates using injected storage service
         stats_df = pd.DataFrame(stats)
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info(f"Completed promotion rates calculation", {
+            "duration_seconds": round(duration, 4),
+            "stats_records_count": len(stats_df)
+        })
+
+        timer_id = performance_monitor.start_timer("save_promotion_data")
         self.data_storage.save(stats_df, self.output_promotion)
-        logger.info(f"Saved promotion rates to {self.output_promotion}")
+        duration = performance_monitor.end_timer(timer_id)
+        logger.info(f"Saved promotion rates to {self.output_promotion}", {
+            "duration_seconds": round(duration, 4),
+            "records_count": len(stats_df)
+        })
 
 
+@log_performance("generate_ladder_data_for_html", {"component": "visualizer"})
 def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE, output_file: str = config.DEFAULT_LADDER_JS_FILE, chunk_size: int = config.CHUNK_SIZE):
     """Generate ladder data for HTML visualization."""
+    logger.info("Starting ladder data generation", {
+        "ladder_file": ladder_file,
+        "output_file": output_file,
+        "chunk_size": chunk_size
+    })
+
     # Load the ladder data
     if not os.path.exists(ladder_file):
-        print(f"{ladder_file} not found!")
+        logger.error(f"Ladder file not found: {ladder_file}")
         return
 
     # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
+    timer_id = performance_monitor.start_timer("load_ladder_data")
     df = pd.read_parquet(ladder_file)
+    load_duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Loaded ladder data: {len(df)} records", {
+        "duration_seconds": round(load_duration, 4),
+        "columns_count": len(df.columns)
+    })
 
     # Get all unique dates
+    timer_id = performance_monitor.start_timer("get_unique_dates")
     unique_dates = sorted(df['date'].unique(), reverse=True)
+    duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Found {len(unique_dates)} unique dates", {
+        "duration_seconds": round(duration, 4)
+    })
 
     # Create a dictionary to store data for each date
+    timer_id = performance_monitor.start_timer("process_ladder_data")
+
+    # Sort dataframe by date and symbol to prepare for next day calculation
+    df_sorted = df.sort_values(['symbol', 'date']).reset_index(drop=True)
+
+    # Calculate next day opening change percentage
+    df_with_next_change = df_sorted.copy()
+    df_with_next_change['next_day_open_change_pct'] = 0.0  # Initialize with 0
+
+    # Group by symbol to calculate next day change
+    for symbol in df_with_next_change['symbol'].unique():
+        symbol_mask = df_with_next_change['symbol'] == symbol
+        symbol_data = df_with_next_change[symbol_mask].sort_values('date')
+
+        # For each date, find the next trading day and calculate the change
+        for idx in range(len(symbol_data) - 1):
+            current_idx = symbol_data.index[idx]
+            next_idx = symbol_data.index[idx + 1]
+
+            current_close = symbol_data.iloc[idx]['close']
+            next_open = symbol_data.loc[next_idx, 'open']
+
+            # Calculate percentage change from current close to next open
+            if current_close != 0:
+                change_pct = ((next_open - current_close) / current_close) * 100
+                df_with_next_change.loc[current_idx, 'next_day_open_change_pct'] = change_pct
+            else:
+                df_with_next_change.loc[current_idx, 'next_day_open_change_pct'] = 0.0
+
     all_dates_data = {}
 
-    for date in unique_dates:
+    for i, date in enumerate(unique_dates):
         # Filter data for this date
-        date_data = df[df['date'] == date].copy()
+        date_data = df_with_next_change[df_with_next_change['date'] == date].copy()
 
         # Group by consecutive limit up days
         grouped = date_data.groupby('consecutive_limit_up_days').apply(
-            lambda x: x[['symbol', 'name', 'close', 'consecutive_limit_up_days', 'concept_themes']].to_dict('records')
+            lambda x: x[['symbol', 'name', 'close', 'consecutive_limit_up_days', 'concept_themes', 'next_day_open_change_pct']].to_dict('records')
         ).to_dict()
 
         # Convert to the format expected by the HTML
@@ -778,64 +940,115 @@ def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE,
                     'name': stock['name'],
                     'price': stock['close'],
                     'limitUpDays': stock['consecutive_limit_up_days'],
-                    'conceptThemes': concepts
+                    'conceptThemes': concepts,
+                    'nextDayOpenChangePct': stock.get('next_day_open_change_pct', 0.0)
                 })
 
         # 将日期格式化为 YYYYMMDD 格式，与前端期望的格式一致
         date_str = pd.to_datetime(date).strftime('%Y%m%d')
         all_dates_data[date_str] = formatted_data
 
+        # Log progress every 10 dates
+        if (i + 1) % 10 == 0:
+            logger.info(f"Processed {i + 1}/{len(unique_dates)} dates...")
+
+    process_duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Completed processing ladder data", {
+        "duration_seconds": round(process_duration, 4),
+        "dates_processed": len(all_dates_data)
+    })
+
     # Save as JS file that can be loaded by the HTML
+    timer_id = performance_monitor.start_timer("save_ladder_js_file")
     js_content = f"// 自动生成的连板数据文件\nwindow.LADDER_DATA = {json.dumps(all_dates_data, ensure_ascii=False)};"
 
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(js_content)
 
-    print(f"Generated ladder data for {len(all_dates_data)} dates to {output_file}")
-    print(f"Latest date in data: {unique_dates[0] if unique_dates else 'None'}")
+    save_duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Saved ladder data to {output_file}", {
+        "duration_seconds": round(save_duration, 4),
+        "dates_count": len(all_dates_data)
+    })
+
+    logger.info(f"Generated ladder data for {len(all_dates_data)} dates to {output_file}")
+    logger.info(f"Latest date in data: {unique_dates[0] if unique_dates else 'None'}")
 
     # Also create a simple summary
     latest_date = unique_dates[0] if unique_dates else None
     if latest_date:
         latest_data = df[df['date'] == latest_date]
-        print(f"Latest date ({latest_date}) has {len(latest_data)} limit-up stocks")
+        logger.info(f"Latest date ({latest_date}) has {len(latest_data)} limit-up stocks")
         level_counts = latest_data['consecutive_limit_up_days'].value_counts().sort_index(ascending=False)
-        print("Distribution by consecutive days:")
+        logger.info("Distribution by consecutive days:")
         for level, count in level_counts.items():
-            print(f"  {level}连板: {count}只")
+            logger.info(f"  {level}连板: {count}只")
 
 
 
 
 def generate_kline_data(input_file: str = config.DEFAULT_OUTPUT_FILE, output_file: str = config.DEFAULT_KLINE_JS_FILE, chunk_size: int = config.CHUNK_SIZE):
     """Generate K-line JS data file for HTML visualization."""
+    logger.info("Starting K-line data generation", {
+        "input_file": input_file,
+        "output_file": output_file,
+        "chunk_size": chunk_size
+    })
+
     if not os.path.exists(input_file):
-        print(f"{input_file} not found!")
+        logger.error(f"Input file not found: {input_file}")
         return
 
     # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
+    timer_id = performance_monitor.start_timer("load_kline_data")
     df = pd.read_parquet(input_file)
+    load_duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Loaded K-line data: {len(df)} records", {
+        "duration_seconds": round(load_duration, 4),
+        "columns_count": len(df.columns)
+    })
+
+    timer_id = performance_monitor.start_timer("process_kline_data")
     df_sorted = df.sort_values(['symbol', 'date'])
     df_sorted['date_formatted'] = pd.to_datetime(df_sorted['date'], format='%Y%m%d', errors='coerce').dt.strftime('%Y-%m-%d')
     grouped = df_sorted.groupby('symbol')
     kline_data = {}
-    for symbol, group in grouped:
+    total_symbols = len(grouped)
+
+    for i, (symbol, group) in enumerate(grouped):
         kline_data[symbol] = {
             'name': group['name'].iloc[0] if 'name' in group.columns else '',
             'dates': group['date_formatted'].tolist(),
             'values': group[['open', 'close', 'low', 'high']].values.tolist(),
             'volumes': group['volume'].tolist()
         }
+
+        # Log progress every 100 symbols
+        if (i + 1) % 100 == 0:
+            logger.info(f"Processed {i + 1}/{total_symbols} symbols...")
+
+    process_duration = performance_monitor.end_timer(timer_id)
+    logger.info(f"Completed processing K-line data", {
+        "duration_seconds": round(process_duration, 4),
+        "symbols_count": len(kline_data)
+    })
+
+    timer_id = performance_monitor.start_timer("save_kline_js_file")
     js_content = f"// 自动生成的K线数据文件\nwindow.KLINE_DATA_GLOBAL = {json.dumps(kline_data, ensure_ascii=False)};"
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(js_content)
-    print(f"Saved K-line data to {output_file}")
+    save_duration = performance_monitor.end_timer(timer_id)
+
+    logger.info(f"Saved K-line data to {output_file}", {
+        "duration_seconds": round(save_duration, 4),
+        "symbols_count": len(kline_data)
+    })
 
 
 def main():
     parser = argparse.ArgumentParser(description='A股连板分析工具 - 统一入口')
-    parser.add_argument('command', choices=['fetch', 'analyze', 'generate-ladder', 'generate-kline', 'full'],
-                        help='执行的命令: fetch(获取数据), analyze(分析数据), generate-ladder(生成阶梯数据), generate-kline(生成K线数据JS), full(完整流程)')
+    parser.add_argument('command', choices=['fetch', 'analyze', 'generate-ladder', 'ladder', 'l', 'generate-kline', 'kline', 'k', 'full'],
+                        help='执行的命令: fetch(获取数据), analyze(分析数据), generate-ladder/ladder/l(生成阶梯数据), generate-kline/kline/k(生成K线数据JS), full(完整流程)')
     parser.add_argument('--start-date', type=str, help='开始日期 YYYYMMDD')
     parser.add_argument('--end-date', type=str, help='结束日期 YYYYMMDD')
     parser.add_argument('--input-file', type=str, default=config.DEFAULT_OUTPUT_FILE, help='输入文件')
@@ -845,6 +1058,15 @@ def main():
     parser.add_argument('--chunk-size', type=int, default=config.CHUNK_SIZE, help='数据处理块大小，用于内存优化')
 
     args = parser.parse_args()
+
+    # Validate date formats if provided
+    if args.start_date and not validate_date_format(args.start_date):
+        logger.error(f"Invalid start date format: {args.start_date}. Expected format: YYYYMMDD")
+        return
+
+    if args.end_date and not validate_date_format(args.end_date):
+        logger.error(f"Invalid end date format: {args.end_date}. Expected format: YYYYMMDD")
+        return
 
     # Determine output file name
     if args.output_file:
@@ -862,15 +1084,15 @@ def main():
     elif args.command == 'analyze':
         analyzer = Analyzer(input_file=args.input_file)
         analyzer.process(chunk_size=args.chunk_size)
-    elif args.command == 'generate-ladder':
+    elif args.command in ['generate-ladder', 'ladder', 'l']:
         generate_ladder_data_for_html(chunk_size=args.chunk_size)
-    elif args.command == 'generate-kline':
+    elif args.command in ['generate-kline', 'kline', 'k']:
         out_js = args.output_file if args.output_file else config.DEFAULT_KLINE_JS_FILE
         generate_kline_data(input_file=args.input_file, output_file=out_js, chunk_size=args.chunk_size)
     elif args.command == 'full':
         # 执行完整流程
         logger.info("开始执行完整分析流程...")
-        
+
         # 1. 获取数据
         fetcher = DataFetcher(output_file=output_file, data_storage=container.get('data_storage'))
         fetcher.run(
@@ -878,14 +1100,17 @@ def main():
             end_date=args.end_date,
             incremental=not args.full_refresh
         )
-        
+
         # 2. 分析数据
         analyzer = Analyzer(input_file=output_file)
         analyzer.process(chunk_size=args.chunk_size)
 
         # 3. 生成阶梯数据
         generate_ladder_data_for_html(chunk_size=args.chunk_size)
-        
+
+        # 4. 生成K线数据
+        generate_kline_data(input_file=output_file, output_file=config.DEFAULT_KLINE_JS_FILE, chunk_size=args.chunk_size)
+
         logger.info("完整分析流程完成！")
 
 

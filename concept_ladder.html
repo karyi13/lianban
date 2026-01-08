@@ -34,6 +34,20 @@
         .ladder-group, .concept-group {
             border-left-width: 4px;
         }
+
+        /* 不同连板数的股票背景色 */
+        .stock-item.level-1 { background: linear-gradient(to right, #e74c3c, #c0392b); }
+        .stock-item.level-2 { background: linear-gradient(to right, #e67e22, #d35400); }
+        .stock-item.level-3 { background: linear-gradient(to right, #f39c12, #f1c40f); }
+        .stock-item.level-4 { background: linear-gradient(to right, #27ae60, #2ecc71); }
+        .stock-item.level-5 { background: linear-gradient(to right, #9b59b6, #8e44ad); }
+        .stock-item.level-6 { background: linear-gradient(to right, #3498db, #2980b9); }
+        .stock-item.level-7 { background: linear-gradient(to right, #1abc9c, #16a085); }
+        .stock-item.level-8 { background: linear-gradient(to right, #e74c3c, #c0392b); }
+        .stock-item.level-9 { background: linear-gradient(to right, #e67e22, #d35400); }
+        .stock-item.level-10 { background: linear-gradient(to right, #f39c12, #f1c40f); }
+        .stock-item.level-11 { background: linear-gradient(to right, #27ae60, #2ecc71); }
+        .stock-item.level-12 { background: linear-gradient(to right, #9b59b6, #8e44ad); }
     </style>
 </head>
 <body class="bg-[#F5F1EB] min-h-screen p-4">
@@ -47,12 +61,12 @@
                     <button id="prevDayBtn" class="px-4 py-2 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-xl font-medium hover:brightness-105 transition-all duration-200 ease-out">⬅️ 上一日</button>
                     <button id="nextDayBtn" class="px-4 py-2 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-xl font-medium hover:brightness-105 transition-all duration-200 ease-out">下一日 ➡️</button>
                 </div>
-                
+
                 <div class="flex items-center gap-2">
                     <label for="datePicker" class="text-[#7A5C4D] font-medium">📅 选择日期:</label>
                     <input type="date" id="datePicker" class="h-10 px-3 bg-white/90 rounded-xl border border-transparent focus:border-[#7A5C4D] focus:ring-2 focus:ring-[#7A5C4D]/15 focus:outline-none transition-all duration-200 ease-out">
                 </div>
-                
+
                 <div class="flex flex-wrap gap-4">
                     <label class="flex items-center gap-1 text-[#7A5C4D]">
                         <input type="checkbox" id="filterST" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
@@ -65,6 +79,14 @@
                     <label class="flex items-center gap-1 text-[#7A5C4D]">
                         <input type="checkbox" id="filterMainBoard" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
                         过滤主板
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="hideOneDay" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        隐藏1板
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="showNextOpenChange" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        显示隔日开盘涨跌幅
                     </label>
                 </div>
             </div>
@@ -94,7 +116,7 @@
             <div id="conceptContainer" class="concept-container mt-8"></div>
         </div>
     </div>
-    
+
     <div id="klineModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
         <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm w-11/12 max-w-4xl h-4/5 relative">
             <span id="closeModal" class="absolute top-3 right-4 text-gray-500 text-2xl cursor-pointer hover:text-gray-700 transition-all duration-200 ease-out">&times;</span>
@@ -167,6 +189,37 @@
                    d.startsWith('600') || d.startsWith('601') || d.startsWith('603') || d.startsWith('605');
         }
 
+        // 计算隔天开盘涨跌幅
+        function calculateNextOpenChange(code, currentDate) {
+            if (!window.KLINE_DATA_GLOBAL || !window.KLINE_DATA_GLOBAL[code]) {
+                return null; // 没有K线数据
+            }
+
+            const stockData = window.KLINE_DATA_GLOBAL[code];
+            const dates = stockData.dates;
+            const values = stockData.values;
+
+            // 找到当前日期的索引
+            const currentIndex = dates.findIndex(date => date.replace(/-/g, '') === currentDate);
+
+            if (currentIndex === -1 || currentIndex >= dates.length - 1) {
+                return null; // 当前日期不存在或已是最后一天，无法计算隔天涨跌幅
+            }
+
+            // 获取当前日期的收盘价和下一天的开盘价
+            // 假设values中每项是[open, high, low, close]格式
+            const currentClose = values[currentIndex][3]; // 收盘价是第4个元素
+            const nextOpen = values[currentIndex + 1][0]; // 开盘价是第1个元素
+
+            if (!currentClose || !nextOpen) {
+                return null; // 数据缺失
+            }
+
+            // 计算涨跌幅：(下一天开盘价 - 当天收盘价) / 当天收盘价 * 100
+            const changePercent = ((nextOpen - currentClose) / currentClose) * 100;
+            return changePercent;
+        }
+
         // 加载数据函数
         function loadData() {
             const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
@@ -205,12 +258,14 @@
                 const filterSTChecked = document.getElementById('filterST')?.checked;
                 const filterChiNextChecked = document.getElementById('filterChiNext')?.checked;
                 const filterMainBoardChecked = document.getElementById('filterMainBoard')?.checked;
+                const hideOneDayChecked = document.getElementById('hideOneDay')?.checked;
 
                 // 应用过滤
                 const filteredStocks = stocks.filter(s => {
                     if (filterSTChecked && isSTStock(s.name)) return false;
                     if (filterChiNextChecked && isChiNext(s.code)) return false;
                     if (filterMainBoardChecked && isMainBoard(s.code)) return false;
+                    if (hideOneDayChecked && s.limitUpDays === 1) return false;
                     return true;
                 });
 
@@ -243,10 +298,24 @@
         }
 
         // 更新统计数据
-        function updateStats(data) {
-            const totalStocks = data.filter(item => item.limitUpDays >= 2).length;
-            const highestLevel = Math.max(...data.map(item => item.limitUpDays));
-            const limitUpCount = data.length;
+        function updateStats(originalData) {
+            // 获取所有数据用于统计（不受隐藏1板选项影响）
+            const allData = [];
+            for (const [level, stockList] of Object.entries(actualData[formatToYYYYMMDD(document.getElementById('datePicker').value)] || {})) {
+                stockList.forEach(stock => {
+                    allData.push({
+                        code: stock.code,
+                        name: stock.name,
+                        price: stock.price,
+                        limitUpDays: stock.limitUpDays,
+                        conceptThemes: stock.conceptThemes
+                    });
+                });
+            }
+
+            const totalStocks = allData.filter(item => item.limitUpDays >= 2).length;
+            const highestLevel = Math.max(...allData.map(item => item.limitUpDays));
+            const limitUpCount = allData.length;
 
             document.getElementById('totalStocks').textContent = totalStocks;
             document.getElementById('highestLevel').textContent = highestLevel;
@@ -277,9 +346,9 @@
                 const stocks = groupedData[level];
                 const levelClass = `level-${level}`;
                 const levelColors = [
-                    'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]', 
-                    'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]', 
-                    'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]', 
+                    'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]',
+                    'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]',
+                    'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]',
                     'border-[#f39c12]', 'border-[#27ae60]', 'border-[#34495e]'
                 ];
                 const colorClass = levelColors[(level - 1) % levelColors.length] || 'border-[#7A5C4D]';
@@ -292,7 +361,19 @@
 
                 stocks.forEach(stock => {
                     const conceptsText = Array.isArray(stock.conceptThemes) ? stock.conceptThemes.join('、') : (stock.conceptThemes || '');
-                    html += `<div class="stock-item px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.code} - ${conceptsText}">${stock.name}</div>`;
+                    const showNextOpenChange = document.getElementById('showNextOpenChange')?.checked;
+                    let stockNameDisplay = stock.name;
+
+                    if (showNextOpenChange) {
+                        // 计算隔天开盘涨跌幅
+                        const nextOpenChange = calculateNextOpenChange(stock.code, formatToYYYYMMDD(document.getElementById('datePicker').value));
+                        if (nextOpenChange !== null) {
+                            const sign = nextOpenChange >= 0 ? '+' : '';
+                            stockNameDisplay += ` (${sign}${nextOpenChange.toFixed(2)}%)`;
+                        }
+                    }
+
+                    html += `<div class="stock-item level-${stock.limitUpDays} px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.code} - ${conceptsText}">${stockNameDisplay}</div>`;
                 });
 
                 html += `
@@ -358,9 +439,9 @@
                 topConcepts.forEach(([theme, stocks], index) => {
                     const conceptClass = `concept-${(index % 12) + 1}`;
                     const conceptColors = [
-                        'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]', 
-                        'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]', 
-                        'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]', 
+                        'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]',
+                        'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]',
+                        'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]',
                         'border-[#f39c12]', 'border-[#27ae60]', 'border-[#34495e]'
                     ];
                     const colorClass = conceptColors[index % conceptColors.length] || 'border-[#7A5C4D]';
@@ -375,7 +456,19 @@
                     `;
 
                 stocks.forEach(stock => {
-                    html += `<div class="stock-item px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.limitUpDays}连板">${stock.name}（${stock.limitUpDays}板）</div>`;
+                    const showNextOpenChange = document.getElementById('showNextOpenChange')?.checked;
+                    let stockNameDisplay = `${stock.name}（${stock.limitUpDays}板）`;
+
+                    if (showNextOpenChange) {
+                        // 计算隔天开盘涨跌幅
+                        const nextOpenChange = calculateNextOpenChange(stock.code, formatToYYYYMMDD(document.getElementById('datePicker').value));
+                        if (nextOpenChange !== null) {
+                            const sign = nextOpenChange >= 0 ? '+' : '';
+                            stockNameDisplay += ` (${sign}${nextOpenChange.toFixed(2)}%)`;
+                        }
+                    }
+
+                    html += `<div class="stock-item level-${stock.limitUpDays} px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.limitUpDays}连板">${stockNameDisplay}</div>`;
                 });
 
                     html += `
@@ -448,6 +541,8 @@
         document.getElementById('filterST').addEventListener('change', loadData);
         document.getElementById('filterChiNext').addEventListener('change', loadData);
         document.getElementById('filterMainBoard').addEventListener('change', loadData);
+        document.getElementById('hideOneDay').addEventListener('change', loadData);
+        document.getElementById('showNextOpenChange').addEventListener('change', loadData);
 
         // 显示K线图模态框
         function showKLineModal(code, name) {
@@ -462,7 +557,7 @@
             if (window.KLINE_DATA_GLOBAL && window.KLINE_DATA_GLOBAL[code]) {
                 const stockData = window.KLINE_DATA_GLOBAL[code];
 
-                // 准备K线数据 - 根据实际数据结构
+                // 准备K线数据- 根据实际数据结构
                 const dates = stockData.dates;
                 const klineData = stockData.values;
 
@@ -472,43 +567,99 @@
                 // 找到目标日期的索引
                 const targetIndex = dates.findIndex(date => date.replace(/-/g, '') === selectedDate);
 
-                // 创建自定义颜色数组，将目标日期的K线设为特殊颜色
-                const colors = klineData.map((item, index) => {
-                    // 将目标日期的K线设为黑色
+                // 创建带有颜色配置的K线数据
+                const klineDataWithColors = klineData.map((item, index) => {
+                    // 数据格式为[open, close, low, high]
+                    const [open, close, low, high] = item;
+                    const isRise = close >= open;
+
+                    // 检查是否为目标日期的K线
                     if (index === targetIndex) {
-                        return '#000000'; // 黑色，用于目标日期
+                        // 目标K线设为黑色
+                        return {
+                            value: [open, close, low, high],
+                            itemStyle: {
+                                color: '#000000',      // 阳线填充色（黑色）
+                                color0: '#000000',     // 阴线填充色（黑色）
+                                borderColor: '#000000', // 阳线边框色（黑色）
+                                borderColor0: '#000000' // 阴线边框色（黑色）
+                            }
+                        };
                     } else {
-                        // 根据涨跌设置颜色
-                        const [open, close] = item;
-                        return close >= open ? '#ef4444' : '#22c55e';
+                        // 普通K线根据涨跌显示颜色
+                        // 根据涨跌返回不同的颜色配置
+                        if (isRise) {
+                            // 上涨K线
+                            return {
+                                value: [open, close, low, high],
+                                itemStyle: {
+                                    color: '#ef4444',      // 上涨K线填充色（红色）
+                                    color0: '#ef4444',     // 上涨K线填充色（红色）
+                                    borderColor: '#ef4444', // 上涨K线边框色（红色）
+                                    borderColor0: '#ef4444' // 上涨K线边框色（红色）
+                                }
+                            };
+                        } else {
+                            // 下跌K线
+                            return {
+                                value: [open, close, low, high],
+                                itemStyle: {
+                                    color: '#22c55e',      // 下跌K线填充色（绿色）
+                                    color0: '#22c55e',     // 下跌K线填充色（绿色）
+                                    borderColor: '#22c55e', // 下跌K线边框色（绿色）
+                                    borderColor0: '#22c55e' // 下跌K线边框色（绿色）
+                                }
+                            };
+                        }
                     }
                 });
 
-                // 创建带有颜色配置的K线数据
-                const klineDataWithColors = klineData.map((item, index) => {
-                    return {
-                        value: item,
-                        itemStyle: {
-                            color: colors[index],
-                            color0: colors[index],
-                            borderColor: colors[index],
-                            borderColor0: colors[index]
+                // 计算默认显示范围，让目标日期K线位于图表右侧约1/4处
+                const totalVisibleBars = 80; // 总共显示80根K线
+                const positionFromRight = Math.floor(totalVisibleBars * 0.25); // 目标K线距离右侧的位置（约25%）
+
+                // 计算起始和结束索引，使目标K线位于右侧约25%处
+                let startIndex = Math.max(0, targetIndex - (totalVisibleBars - positionFromRight - 1));
+                let endIndex = Math.min(dates.length - 1, targetIndex + positionFromRight);
+
+                // 确保显示的K线总数为totalVisibleBars（如果数据足够的话）
+                if (endIndex - startIndex + 1 < totalVisibleBars) {
+                    if (startIndex === 0) {
+                        // 如果在开头，向右扩展endIndex
+                        endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                    } else if (endIndex === dates.length - 1) {
+                        // 如果在末尾，向左扩展startIndex
+                        startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                    } else {
+                        // 否则，两边同时扩展
+                        const remainingBars = totalVisibleBars - (endIndex - startIndex + 1);
+                        const extendStart = Math.floor(remainingBars / 2);
+                        const extendEnd = remainingBars - extendStart;
+
+                        startIndex = Math.max(0, startIndex - extendStart);
+                        endIndex = Math.min(dates.length - 1, endIndex + extendEnd);
+
+                        // 如果仍然不足，再次调整
+                        if (endIndex - startIndex + 1 < totalVisibleBars) {
+                            if (startIndex === 0) {
+                                endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                            } else if (endIndex === dates.length - 1) {
+                                startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                            }
                         }
-                    };
-                });
-
-                // 计算默认显示范围（最近2个月左右的数据）
-                let startIndex = Math.max(0, targetIndex - 40); // 大约2个月的交易日
-                let endIndex = Math.min(dates.length - 1, targetIndex + 20); // 目标日期后约1个月
-
-                // 确保至少显示60个交易日
-                if (endIndex - startIndex < 60) {
-                    const additional = Math.floor((60 - (endIndex - startIndex)) / 2);
-                    startIndex = Math.max(0, startIndex - additional);
-                    endIndex = Math.min(dates.length - 1, endIndex + additional);
+                    }
                 }
 
-                // 配置ECharts选项
+                // 确保目标K线在可视范围内
+                if (targetIndex < startIndex) {
+                    startIndex = Math.max(0, targetIndex - (totalVisibleBars - positionFromRight - 1));
+                    endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                } else if (targetIndex > endIndex) {
+                    endIndex = Math.min(dates.length - 1, targetIndex + positionFromRight);
+                    startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                }
+
+                // 配置ECharts选项 - 创建主图和副图
                 const option = {
                     title: {
                         text: `${name} (${code})`,
@@ -522,35 +673,179 @@
                         trigger: 'axis',
                         axisPointer: {
                             type: 'cross'
+                        },
+                        formatter: function(params) {
+                            if (params.length > 0) {
+                                const param = params[0];
+                                const dataIndex = param.dataIndex;
+                                const date = dates[dataIndex];
+                                
+                                // 判断是否为主图的K线数据还是副图的成交量数据
+                                let klineParam = null;
+                                let volumeParam = null;
+                                
+                                params.forEach(p => {
+                                    if (p.seriesName === 'K线') {
+                                        klineParam = p;
+                                    } else if (p.seriesName === '成交量') {
+                                        volumeParam = p;
+                                    }
+                                });
+                                
+                                if (klineParam) {
+                                    const [open, close, low, high] = klineData[dataIndex]; // [open, close, low, high]
+                                    const volume = stockData.volumes[dataIndex]; // 成交量
+
+                                    // 计算相对前一日收盘价的涨跌幅
+                                    let prevClose = null;
+                                    if (dataIndex > 0) {
+                                        prevClose = klineData[dataIndex - 1][1]; // 前一日收盘价 (索引1是close)
+                                    } else if (window.KLINE_DATA_GLOBAL && window.KLINE_DATA_GLOBAL[code]) {
+                                        // 如果是第一个数据点，尝试从历史数据中获取前一日收盘价
+                                        const stockData = window.KLINE_DATA_GLOBAL[code];
+                                        const allDates = stockData.dates;
+                                        const allValues = stockData.values;
+                                        const currentIdx = allDates.findIndex(d => d.replace(/-/g, '') === date.replace(/-/g, ''));
+                                        if (currentIdx > 0) {
+                                            prevClose = allValues[currentIdx - 1][1]; // 前一日收盘价 (索引1是close)
+                                        }
+                                    }
+
+                                    let openChange = '';
+                                    let highChange = '';
+                                    let lowChange = '';
+                                    let closeChange = '';
+
+                                    if (prevClose !== null) {
+                                        const openPercent = ((open - prevClose) / prevClose * 100);
+                                        const closePercent = ((close - prevClose) / prevClose * 100);
+                                        const lowPercent = ((low - prevClose) / prevClose * 100);
+                                        const highPercent = ((high - prevClose) / prevClose * 100);
+
+                                        openChange = ` (${openPercent >= 0 ? '+' : ''}${openPercent.toFixed(2)}%)`;
+                                        closeChange = ` (${closePercent >= 0 ? '+' : ''}${closePercent.toFixed(2)}%)`;
+                                        lowChange = ` (${lowPercent >= 0 ? '+' : ''}${lowPercent.toFixed(2)}%)`;
+                                        highChange = ` (${highPercent >= 0 ? '+' : ''}${highPercent.toFixed(2)}%)`;
+                                    }
+
+                                    // 检查是否为目标日期
+                                    if (dataIndex === targetIndex) {
+                                        return `${date}<br/>
+                                            开盘: ${open}${openChange}<br/>
+                                            收盘: ${close}${closeChange}<br/>
+                                            最低: ${low}${lowChange}<br/>
+                                            最高: ${high}${highChange}<br/>
+                                            成交量: ${volume.toLocaleString()}<br/>
+                                            <span style="color:#000000">【目标K线】</span>`;
+                                    } else {
+                                        return `${date}<br/>
+                                            开盘: ${open}${openChange}<br/>
+                                            收盘: ${close}${closeChange}<br/>
+                                            最低: ${low}${lowChange}<br/>
+                                            最高: ${high}${highChange}<br/>
+                                            成交量: ${volume.toLocaleString()}`;
+                                    }
+                                } else if (volumeParam) {
+                                    // 如果只有成交量数据
+                                    const volume = stockData.volumes[dataIndex];
+                                    return `${date}<br/>成交量: ${volume.toLocaleString()}`;
+                                }
+                            }
+                            return '';
                         }
                     },
-                    xAxis: {
-                        type: 'category',
-                        data: dates,
-                        axisLabel: {
-                            color: '#7A5C4D'
-                        }
-                    },
-                    yAxis: {
-                        type: 'value',
-                        axisLabel: {
-                            color: '#7A5C4D'
-                        }
-                    },
-                    series: [{
-                        data: klineDataWithColors,
-                        type: 'candlestick'
+                    grid: [{
+                        left: '10%',
+                        right: '10%',
+                        top: '10%',
+                        height: '60%'
+                    }, {
+                        left: '10%',
+                        right: '10%',
+                        top: '75%',
+                        height: '15%'
                     }],
+                    xAxis: [
+                        {
+                            type: 'category',
+                            data: dates,
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 0
+                        },
+                        {
+                            type: 'category',
+                            data: dates,
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 1
+                        }
+                    ],
+                    yAxis: [
+                        {
+                            type: 'value',
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 0
+                        },
+                        {
+                            type: 'value',
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 1
+                        }
+                    ],
+                    series: [
+                        {
+                            name: 'K线',
+                            type: 'candlestick',
+                            data: klineDataWithColors,
+                            itemStyle: {
+                                color: '#ef4444',      // 阳线填充色（红色）
+                                color0: '#22c55e',     // 阴线填充色（绿色）
+                                borderColor: '#ef4444', // 阳线边框色（红色）
+                                borderColor0: '#22c55e' // 阴线边框色（绿色）
+                            },
+                            lineStyle: {
+                                width: 1
+                            },
+                            xAxisIndex: 0,
+                            yAxisIndex: 0
+                        },
+                        {
+                            name: '成交量',
+                            type: 'bar',
+                            data: stockData.volumes.map((vol, idx) => {
+                                // 根据当日涨跌确定柱子颜色
+                                const [open, close, low, high] = klineData[idx];
+                                const isRise = close >= open;
+                                return {
+                                    value: vol,
+                                    itemStyle: {
+                                        color: isRise ? '#ef4444' : '#22c55e'
+                                    }
+                                };
+                            }),
+                            xAxisIndex: 1,
+                            yAxisIndex: 1
+                        }
+                    ],
                     dataZoom: [
                         {
                             type: 'inside',
-                            startValue: dates[startIndex],
-                            endValue: dates[endIndex]
+                            xAxisIndex: [0, 1],
+                            startValue: dates[Math.max(0, startIndex)],
+                            endValue: dates[Math.min(dates.length - 1, endIndex)]
                         },
                         {
                             type: 'slider',
-                            startValue: dates[startIndex],
-                            endValue: dates[endIndex],
+                            xAxisIndex: [0, 1],
+                            startValue: dates[Math.max(0, startIndex)],
+                            endValue: dates[Math.min(dates.length - 1, endIndex)],
                             bottom: 10
                         }
                     ]

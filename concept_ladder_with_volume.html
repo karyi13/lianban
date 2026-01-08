@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>连板天梯图</title>
+    <!-- 引入 ECharts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500&family=LXGW+WenKai&display=swap" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'Sora';
+            src: url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500&display=swap');
+            unicode-range: U+0020-007F;
+        }
+        @font-face {
+            font-family: 'LXGW WenKai';
+            src: url('https://fonts.googleapis.com/css2?family=LXGW+WenKai&display=swap');
+            unicode-range: U+4E00-9FFF;
+        }
+        body {
+            font-family: 'Sora', 'LXGW WenKai', sans-serif;
+        }
+        .stock-item {
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .stock-item:hover {
+            transform: scale(1.05);
+        }
+        .ladder-group, .concept-group {
+            border-left-width: 4px;
+        }
+
+        /* 不同连板数的股票背景色 */
+        .stock-item.level-1 { background: linear-gradient(to right, #e74c3c, #c0392b); }
+        .stock-item.level-2 { background: linear-gradient(to right, #e67e22, #d35400); }
+        .stock-item.level-3 { background: linear-gradient(to right, #f39c12, #f1c40f); }
+        .stock-item.level-4 { background: linear-gradient(to right, #27ae60, #2ecc71); }
+        .stock-item.level-5 { background: linear-gradient(to right, #9b59b6, #8e44ad); }
+        .stock-item.level-6 { background: linear-gradient(to right, #3498db, #2980b9); }
+        .stock-item.level-7 { background: linear-gradient(to right, #1abc9c, #16a085); }
+        .stock-item.level-8 { background: linear-gradient(to right, #e74c3c, #c0392b); }
+        .stock-item.level-9 { background: linear-gradient(to right, #e67e22, #d35400); }
+        .stock-item.level-10 { background: linear-gradient(to right, #f39c12, #f1c40f); }
+        .stock-item.level-11 { background: linear-gradient(to right, #27ae60, #2ecc71); }
+        .stock-item.level-12 { background: linear-gradient(to right, #9b59b6, #8e44ad); }
+    </style>
+</head>
+<body class="bg-[#F5F1EB] min-h-screen p-4">
+    <!-- 柔和极简 · 人工微调版 -->
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-2xl font-medium text-center text-[#7A5C4D] mb-6">📈 连板天梯图</h1>
+
+        <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-6 mb-6 transition-all duration-200 ease-out">
+            <div class="flex flex-wrap justify-center items-center gap-4 mb-6">
+                <div class="flex gap-2">
+                    <button id="prevDayBtn" class="px-4 py-2 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-xl font-medium hover:brightness-105 transition-all duration-200 ease-out">⬅️ 上一日</button>
+                    <button id="nextDayBtn" class="px-4 py-2 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-xl font-medium hover:brightness-105 transition-all duration-200 ease-out">下一日 ➡️</button>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <label for="datePicker" class="text-[#7A5C4D] font-medium">📅 选择日期:</label>
+                    <input type="date" id="datePicker" class="h-10 px-3 bg-white/90 rounded-xl border border-transparent focus:border-[#7A5C4D] focus:ring-2 focus:ring-[#7A5C4D]/15 focus:outline-none transition-all duration-200 ease-out">
+                </div>
+
+                <div class="flex flex-wrap gap-4">
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="filterST" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        过滤ST
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="filterChiNext" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        过滤创业板
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="filterMainBoard" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        过滤主板
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="hideOneDay" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        隐藏1板
+                    </label>
+                    <label class="flex items-center gap-1 text-[#7A5C4D]">
+                        <input type="checkbox" id="showNextOpenChange" class="rounded text-[#7A5C4D] focus:ring-[#7A5C4D]/50">
+                        显示隔日开盘涨跌幅
+                    </label>
+                </div>
+            </div>
+
+            <div id="loading" class="text-center py-10 text-[#7A5C4D] hidden">🔄 正在加载数据...</div>
+            <div id="error" class="text-center py-4 text-red-500 bg-red-50 rounded-xl mb-4 hidden"></div>
+
+            <div id="statsContainer" class="hidden">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-4 text-center">
+                        <div class="text-2xl font-bold text-[#7A5C4D]" id="totalStocks">0</div>
+                        <div class="text-sm text-[#8C6E5F] mt-1">总连板股数</div>
+                    </div>
+                    <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-4 text-center">
+                        <div class="text-2xl font-bold text-[#7A5C4D]" id="highestLevel">0</div>
+                        <div class="text-sm text-[#8C6E5F] mt-1">最高连板数</div>
+                    </div>
+                    <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-4 text-center">
+                        <div class="text-2xl font-bold text-[#7A5C4D]" id="limitUpCount">0</div>
+                        <div class="text-sm text-[#8C6E5F] mt-1">涨停股数</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="ladderContainer" class="ladder-container"></div>
+
+            <div id="conceptContainer" class="concept-container mt-8"></div>
+        </div>
+    </div>
+
+    <div id="klineModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm w-11/12 max-w-4xl h-4/5 relative">
+            <span id="closeModal" class="absolute top-3 right-4 text-gray-500 text-2xl cursor-pointer hover:text-gray-700 transition-all duration-200 ease-out">&times;</span>
+            <div class="flex justify-center items-center gap-5 p-4">
+                <button id="prevStockBtn" class="px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-lg font-medium hover:brightness-105 transition-all duration-200 ease-out">← 上一个</button>
+                <span id="stockCounter" class="text-[#7A5C4D]"></span>
+                <button id="nextStockBtn" class="px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-lg font-medium hover:brightness-105 transition-all duration-200 ease-out">下一个 →</button>
+            </div>
+            <div id="klineChart" class="w-full h-4/5 p-2"></div>
+        </div>
+    </div>
+
+    <!-- 从 data 目录加载 K线和连板数据 JS -->
+    <script src="data/kline_data.js"></script>
+    <script src="data/ladder_data.js"></script>
+
+    <script>
+        // 获取当前日期并设置为默认值
+        const today = new Date();
+        const formattedDate = today.toISOString().split('T')[0];
+        document.getElementById('datePicker').value = formattedDate;
+
+        // 当前展示的股票列表和当前选中索引
+        let currentAllStocks = [];
+        let currentStockIndex = -1;
+
+        // 嵌入实际数据
+        // 数据已移至 ladder_data.js，通过 window.LADDER_DATA 获取
+        let actualData = window.LADDER_DATA || {};
+        if (Object.keys(actualData).length === 0) console.warn("警告: 未加载到连板数据");
+
+        // 覆盖 actualData 以优先使用 data/ladder_data.js 中的数据
+        try { actualData = window.LADDER_DATA && Object.keys(window.LADDER_DATA).length ? window.LADDER_DATA : actualData; } catch (e) {}
+        // 获取所有可用的交易日
+        const availableTradingDays = Object.keys(actualData).sort().reverse();
+        const minDate = availableTradingDays[availableTradingDays.length - 1];
+        const maxDate = availableTradingDays[0];
+
+        // 设置日期选择器的最小和最大值
+        document.getElementById('datePicker').min = minDate.substring(0, 4) + '-' + minDate.substring(4, 6) + '-' + minDate.substring(6, 8);
+        document.getElementById('datePicker').max = maxDate.substring(0, 4) + '-' + maxDate.substring(4, 6) + '-' + maxDate.substring(6, 8);
+
+        // 格式化日期为 YYYY-MM-DD
+        function formatDate(dateString) {
+            if (dateString.length === 8) {
+                return dateString.substring(0, 4) + '-' + dateString.substring(4, 6) + '-' + dateString.substring(6, 8);
+            }
+            return dateString;
+        }
+
+        // 格式化日期为 YYYYMMDD
+        function formatToYYYYMMDD(dateString) {
+            if (dateString.length === 10) { // YYYY-MM-DD
+                return dateString.replace(/-/g, '');
+            }
+            return dateString;
+        }
+
+        // 股票属性判断
+        function isSTStock(name) {
+            return /^\*?ST/.test(name || '');
+        }
+        function isChiNext(code) {
+            const digits = (code || '').split('.')[0];
+            return digits.startsWith('300') || digits.startsWith('301');
+        }
+        function isMainBoard(code) {
+            const d = (code || '').split('.')[0];
+            return d.startsWith('000') || d.startsWith('001') || d.startsWith('002') ||
+                   d.startsWith('600') || d.startsWith('601') || d.startsWith('603') || d.startsWith('605');
+        }
+
+        // 计算隔天开盘涨跌幅
+        function calculateNextOpenChange(code, currentDate) {
+            if (!window.KLINE_DATA_GLOBAL || !window.KLINE_DATA_GLOBAL[code]) {
+                return null; // 没有K线数据
+            }
+
+            const stockData = window.KLINE_DATA_GLOBAL[code];
+            const dates = stockData.dates;
+            const values = stockData.values;
+
+            // 找到当前日期的索引
+            const currentIndex = dates.findIndex(date => date.replace(/-/g, '') === currentDate);
+
+            if (currentIndex === -1 || currentIndex >= dates.length - 1) {
+                return null; // 当前日期不存在或已是最后一天，无法计算隔天涨跌幅
+            }
+
+            // 获取当前日期的收盘价和下一天的开盘价
+            // 假设values中每项是[open, high, low, close]格式
+            const currentClose = values[currentIndex][3]; // 收盘价是第4个元素
+            const nextOpen = values[currentIndex + 1][0]; // 开盘价是第1个元素
+
+            if (!currentClose || !nextOpen) {
+                return null; // 数据缺失
+            }
+
+            // 计算涨跌幅：(下一天开盘价 - 当天收盘价) / 当天收盘价 * 100
+            const changePercent = ((nextOpen - currentClose) / currentClose) * 100;
+            return changePercent;
+        }
+
+        // 加载数据函数
+        function loadData() {
+            const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const ladderContainer = document.getElementById('ladderContainer');
+            const conceptContainer = document.getElementById('conceptContainer');
+            const statsContainer = document.getElementById('statsContainer');
+
+            // 显示加载状态
+            loadingDiv.classList.remove('hidden');
+            errorDiv.classList.add('hidden');
+            ladderContainer.innerHTML = '';
+            conceptContainer.innerHTML = '';
+            statsContainer.classList.add('hidden');
+
+            try {
+                // 获取指定日期的数据
+                const dateData = actualData[selectedDate] || {};
+
+                // 将数据转换为按连板天数分组的格式
+                const stocks = [];
+                for (const [level, stockList] of Object.entries(dateData)) {
+                    stockList.forEach(stock => {
+                        stocks.push({
+                            code: stock.code,
+                            name: stock.name,
+                            price: stock.price,
+                            limitUpDays: stock.limitUpDays,
+                            conceptThemes: stock.conceptThemes
+                        });
+                    });
+                }
+
+                // 读取过滤选项
+                const filterSTChecked = document.getElementById('filterST')?.checked;
+                const filterChiNextChecked = document.getElementById('filterChiNext')?.checked;
+                const filterMainBoardChecked = document.getElementById('filterMainBoard')?.checked;
+                const hideOneDayChecked = document.getElementById('hideOneDay')?.checked;
+
+                // 应用过滤
+                const filteredStocks = stocks.filter(s => {
+                    if (filterSTChecked && isSTStock(s.name)) return false;
+                    if (filterChiNextChecked && isChiNext(s.code)) return false;
+                    if (filterMainBoardChecked && isMainBoard(s.code)) return false;
+                    if (hideOneDayChecked && s.limitUpDays === 1) return false;
+                    return true;
+                });
+
+                if (filteredStocks.length === 0) {
+                    ladderContainer.innerHTML = '<div class="text-center py-10 text-[#7A5C4D]">😔 暂无连板数据</div>';
+                    currentAllStocks = [];
+                } else {
+                    // 排序并保存到全局变量，用于K线切换
+                    // 按连板数降序排序，同板按代码升序
+                    filteredStocks.sort((a, b) => {
+                        if (b.limitUpDays !== a.limitUpDays) {
+                            return b.limitUpDays - a.limitUpDays;
+                        }
+                        return a.code.localeCompare(b.code);
+                    });
+                    currentAllStocks = filteredStocks;
+
+                    renderLadderGroups(filteredStocks);
+                    renderConceptGroups(filteredStocks);
+                    updateStats(filteredStocks);
+                    statsContainer.classList.remove('hidden');
+                }
+            } catch (error) {
+                errorDiv.classList.remove('hidden');
+                errorDiv.textContent = '❌ 加载数据失败: ' + error.message;
+                console.error('Error loading data:', error);
+            } finally {
+                loadingDiv.classList.add('hidden');
+            }
+        }
+
+        // 更新统计数据
+        function updateStats(originalData) {
+            // 获取所有数据用于统计（不受隐藏1板选项影响）
+            const allData = [];
+            for (const [level, stockList] of Object.entries(actualData[formatToYYYYMMDD(document.getElementById('datePicker').value)] || {})) {
+                stockList.forEach(stock => {
+                    allData.push({
+                        code: stock.code,
+                        name: stock.name,
+                        price: stock.price,
+                        limitUpDays: stock.limitUpDays,
+                        conceptThemes: stock.conceptThemes
+                    });
+                });
+            }
+
+            const totalStocks = allData.filter(item => item.limitUpDays >= 2).length;
+            const highestLevel = Math.max(...allData.map(item => item.limitUpDays));
+            const limitUpCount = allData.length;
+
+            document.getElementById('totalStocks').textContent = totalStocks;
+            document.getElementById('highestLevel').textContent = highestLevel;
+            document.getElementById('limitUpCount').textContent = limitUpCount;
+        }
+
+        // 渲染连板分组
+        function renderLadderGroups(data) {
+            const ladderContainer = document.getElementById('ladderContainer');
+
+            // 按连板天数分组
+            const groupedData = {};
+            data.forEach(item => {
+                if (!groupedData[item.limitUpDays]) {
+                    groupedData[item.limitUpDays] = [];
+                }
+                groupedData[item.limitUpDays].push(item);
+            });
+
+            // 按连板天数降序排列
+            const sortedLevels = Object.keys(groupedData)
+                .map(Number)
+                .sort((a, b) => b - a);
+
+            let html = '';
+
+            sortedLevels.forEach(level => {
+                const stocks = groupedData[level];
+                const levelClass = `level-${level}`;
+                const levelColors = [
+                    'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]',
+                    'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]',
+                    'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]',
+                    'border-[#f39c12]', 'border-[#27ae60]', 'border-[#34495e]'
+                ];
+                const colorClass = levelColors[(level - 1) % levelColors.length] || 'border-[#7A5C4D]';
+
+                html += `
+                    <div class="ladder-group ${levelClass} bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-4 mb-4 border-l-4 ${colorClass}">
+                        <div class="ladder-title font-bold text-lg text-[#7A5C4D] mb-3">${level}连板：</div>
+                        <div class="stocks-list flex flex-wrap gap-2">
+                `;
+
+                stocks.forEach(stock => {
+                    const conceptsText = Array.isArray(stock.conceptThemes) ? stock.conceptThemes.join('、') : (stock.conceptThemes || '');
+                    const showNextOpenChange = document.getElementById('showNextOpenChange')?.checked;
+                    let stockNameDisplay = stock.name;
+
+                    if (showNextOpenChange) {
+                        // 计算隔天开盘涨跌幅
+                        const nextOpenChange = calculateNextOpenChange(stock.code, formatToYYYYMMDD(document.getElementById('datePicker').value));
+                        if (nextOpenChange !== null) {
+                            const sign = nextOpenChange >= 0 ? '+' : '';
+                            stockNameDisplay += ` (${sign}${nextOpenChange.toFixed(2)}%)`;
+                        }
+                    }
+
+                    html += `<div class="stock-item level-${stock.limitUpDays} px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.code} - ${conceptsText}">${stockNameDisplay}</div>`;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            ladderContainer.innerHTML = html;
+        }
+
+        // 渲染概念题材分组
+        function renderConceptGroups(data) {
+            const conceptContainer = document.getElementById('conceptContainer');
+
+            // 按概念题材分组
+            const conceptGroupedData = {};
+            data.forEach(item => {
+                // 分割概念主题（支持数组或逗号分隔字符串）
+                let themes = [];
+                if (Array.isArray(item.conceptThemes)) {
+                    themes = item.conceptThemes;
+                } else if (typeof item.conceptThemes === 'string') {
+                    themes = item.conceptThemes.split(', ');
+                } else {
+                    themes = ['暂无概念'];
+                }
+
+                themes.forEach(theme => {
+                    if (!conceptGroupedData[theme]) {
+                        conceptGroupedData[theme] = [];
+                    }
+                    conceptGroupedData[theme].push(item);
+                });
+            });
+
+            // 按股票数量降序排列
+            const sortedConcepts = Object.entries(conceptGroupedData)
+                .sort((a, b) => b[1].length - a[1].length);
+
+            // 过滤不需要的概念（包括TBD、暂无概念以及昨日涨停/连板等技术性标签）
+            const ignoredConcepts = [
+                'TBD', '暂无概念',
+                '融资融券', '机构重仓', '深股通', '沪股通',
+                '富时罗素', '标准普尔', 'MSCI中国',
+                '参股新三板', '转债标的', 'ST股'
+            ];
+
+            // 只取前5个核心概念
+            const topConcepts = sortedConcepts.filter(([theme]) => {
+                if (ignoredConcepts.includes(theme)) return false;
+                if (theme.startsWith('昨日')) return false; // 过滤所有以"昨日"开头的概念
+                if (theme.includes('中报') || theme.includes('年报') || theme.includes('季报')) return false; // 过滤业绩报告类
+                return true;
+            }).slice(0, 5);
+
+            let html = '<h2 class="text-xl font-bold text-[#7A5C4D] mt-6 mb-4">💡 核心题材概念 (Top 5)</h2>';
+
+            // 如果没有数据
+            if (topConcepts.length === 0) {
+                 html += '<div class="text-center py-10 text-[#7A5C4D]">暂无核心概念数据</div>';
+            } else {
+                topConcepts.forEach(([theme, stocks], index) => {
+                    const conceptClass = `concept-${(index % 12) + 1}`;
+                    const conceptColors = [
+                        'border-[#e74c3c]', 'border-[#e67e22]', 'border-[#f39c12]',
+                        'border-[#27ae60]', 'border-[#9b59b6]', 'border-[#3498db]',
+                        'border-[#1abc9c]', 'border-[#e74c3c]', 'border-[#e67e22]',
+                        'border-[#f39c12]', 'border-[#27ae60]', 'border-[#34495e]'
+                    ];
+                    const colorClass = conceptColors[index % conceptColors.length] || 'border-[#7A5C4D]';
+
+                    // 按连板数降序排序
+                    stocks.sort((a, b) => b.limitUpDays - a.limitUpDays);
+
+                    html += `
+                        <div class="concept-group ${conceptClass} bg-white/75 backdrop-blur-sm rounded-2xl shadow-sm p-4 mb-4 border-l-4 ${colorClass}">
+                            <div class="concept-title font-bold text-lg text-[#7A5C4D] mb-3">${theme}（${stocks.length}只）：</div>
+                            <div class="stocks-list flex flex-wrap gap-2">
+                    `;
+
+                stocks.forEach(stock => {
+                    const showNextOpenChange = document.getElementById('showNextOpenChange')?.checked;
+                    let stockNameDisplay = `${stock.name}（${stock.limitUpDays}板）`;
+
+                    if (showNextOpenChange) {
+                        // 计算隔天开盘涨跌幅
+                        const nextOpenChange = calculateNextOpenChange(stock.code, formatToYYYYMMDD(document.getElementById('datePicker').value));
+                        if (nextOpenChange !== null) {
+                            const sign = nextOpenChange >= 0 ? '+' : '';
+                            stockNameDisplay += ` (${sign}${nextOpenChange.toFixed(2)}%)`;
+                        }
+                    }
+
+                    html += `<div class="stock-item level-${stock.limitUpDays} px-3 py-1.5 bg-gradient-to-r from-[#7A5C4D] to-[#8C6E5F] text-white rounded-full text-sm font-medium" data-code="${stock.code}" data-name="${stock.name}" title="${stock.limitUpDays}连板">${stockNameDisplay}</div>`;
+                });
+
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            conceptContainer.innerHTML = html;
+        }
+
+        // 获取下一个交易日
+        function getNextTradingDay(currentDate) {
+            const currentIndex = availableTradingDays.indexOf(formatToYYYYMMDD(currentDate));
+            if (currentIndex > 0) {
+                const nextDay = availableTradingDays[currentIndex - 1];
+                return nextDay.substring(0, 4) + '-' + nextDay.substring(4, 6) + '-' + nextDay.substring(6, 8);
+            }
+            return null;
+        }
+
+        // 获取上一个交易日
+        function getPrevTradingDay(currentDate) {
+            const currentIndex = availableTradingDays.indexOf(formatToYYYYMMDD(currentDate));
+            if (currentIndex < availableTradingDays.length - 1) {
+                const prevDay = availableTradingDays[currentIndex + 1];
+                return prevDay.substring(0, 4) + '-' + prevDay.substring(4, 6) + '-' + prevDay.substring(6, 8);
+            }
+            return null;
+        }
+
+        // 更新按钮状态
+        function updateButtonStates() {
+            const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+            const nextDay = getNextTradingDay(selectedDate);
+            const prevDay = getPrevTradingDay(selectedDate);
+
+            document.getElementById('prevDayBtn').disabled = !prevDay;
+            document.getElementById('nextDayBtn').disabled = !nextDay;
+        }
+
+        // 事件监听器
+        document.getElementById('datePicker').addEventListener('change', function() {
+            loadData();
+            updateButtonStates();
+        });
+
+        document.getElementById('prevDayBtn').addEventListener('click', function() {
+            const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+            const prevDay = getPrevTradingDay(selectedDate);
+            if (prevDay) {
+                document.getElementById('datePicker').value = formatDate(prevDay);
+                loadData();
+                updateButtonStates();
+            }
+        });
+
+        document.getElementById('nextDayBtn').addEventListener('click', function() {
+            const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+            const nextDay = getNextTradingDay(selectedDate);
+            if (nextDay) {
+                document.getElementById('datePicker').value = formatDate(nextDay);
+                loadData();
+                updateButtonStates();
+            }
+        });
+
+        // 过滤选项变化时重新加载数据
+        document.getElementById('filterST').addEventListener('change', loadData);
+        document.getElementById('filterChiNext').addEventListener('change', loadData);
+        document.getElementById('filterMainBoard').addEventListener('change', loadData);
+        document.getElementById('hideOneDay').addEventListener('change', loadData);
+        document.getElementById('showNextOpenChange').addEventListener('change', loadData);
+
+        // 显示K线图模态框
+        function showKLineModal(code, name) {
+            document.getElementById('klineModal').classList.remove('hidden');
+            currentStockIndex = currentAllStocks.findIndex(s => s.code === code);
+            
+            // 初始化ECharts实例
+            const chartDom = document.getElementById('klineChart');
+            const myChart = echarts.init(chartDom);
+            
+            // 检查是否有K线数据
+            if (window.KLINE_DATA_GLOBAL && window.KLINE_DATA_GLOBAL[code]) {
+                const stockData = window.KLINE_DATA_GLOBAL[code];
+
+                // 准备K线数据- 根据实际数据结构
+                const dates = stockData.dates;
+                const klineData = stockData.values;
+
+                // 获取当前选中的日期
+                const selectedDate = formatToYYYYMMDD(document.getElementById('datePicker').value);
+
+                // 找到目标日期的索引
+                const targetIndex = dates.findIndex(date => date.replace(/-/g, '') === selectedDate);
+
+                // 创建带有颜色配置的K线数据
+                const klineDataWithColors = klineData.map((item, index) => {
+                    // 数据格式为[open, close, low, high]
+                    const [open, close, low, high] = item;
+                    const isRise = close >= open;
+
+                    // 检查是否为目标日期的K线
+                    if (index === targetIndex) {
+                        // 目标K线设为黑色
+                        return {
+                            value: [open, close, low, high],
+                            itemStyle: {
+                                color: '#000000',      // 阳线填充色（黑色）
+                                color0: '#000000',     // 阴线填充色（黑色）
+                                borderColor: '#000000', // 阳线边框色（黑色）
+                                borderColor0: '#000000' // 阴线边框色（黑色）
+                            }
+                        };
+                    } else {
+                        // 普通K线根据涨跌显示颜色
+                        // 根据涨跌返回不同的颜色配置
+                        if (isRise) {
+                            // 上涨K线
+                            return {
+                                value: [open, close, low, high],
+                                itemStyle: {
+                                    color: '#ef4444',      // 上涨K线填充色（红色）
+                                    color0: '#ef4444',     // 上涨K线填充色（红色）
+                                    borderColor: '#ef4444', // 上涨K线边框色（红色）
+                                    borderColor0: '#ef4444' // 上涨K线边框色（红色）
+                                }
+                            };
+                        } else {
+                            // 下跌K线
+                            return {
+                                value: [open, close, low, high],
+                                itemStyle: {
+                                    color: '#22c55e',      // 下跌K线填充色（绿色）
+                                    color0: '#22c55e',     // 下跌K线填充色（绿色）
+                                    borderColor: '#22c55e', // 下跌K线边框色（绿色）
+                                    borderColor0: '#22c55e' // 下跌K线边框色（绿色）
+                                }
+                            };
+                        }
+                    }
+                });
+
+                // 计算默认显示范围，让目标日期K线位于图表右侧约1/4处
+                const totalVisibleBars = 80; // 总共显示80根K线
+                const positionFromRight = Math.floor(totalVisibleBars * 0.25); // 目标K线距离右侧的位置（约25%）
+
+                // 计算起始和结束索引，使目标K线位于右侧约25%处
+                let startIndex = Math.max(0, targetIndex - (totalVisibleBars - positionFromRight - 1));
+                let endIndex = Math.min(dates.length - 1, targetIndex + positionFromRight);
+
+                // 确保显示的K线总数为totalVisibleBars（如果数据足够的话）
+                if (endIndex - startIndex + 1 < totalVisibleBars) {
+                    if (startIndex === 0) {
+                        // 如果在开头，向右扩展endIndex
+                        endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                    } else if (endIndex === dates.length - 1) {
+                        // 如果在末尾，向左扩展startIndex
+                        startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                    } else {
+                        // 否则，两边同时扩展
+                        const remainingBars = totalVisibleBars - (endIndex - startIndex + 1);
+                        const extendStart = Math.floor(remainingBars / 2);
+                        const extendEnd = remainingBars - extendStart;
+
+                        startIndex = Math.max(0, startIndex - extendStart);
+                        endIndex = Math.min(dates.length - 1, endIndex + extendEnd);
+
+                        // 如果仍然不足，再次调整
+                        if (endIndex - startIndex + 1 < totalVisibleBars) {
+                            if (startIndex === 0) {
+                                endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                            } else if (endIndex === dates.length - 1) {
+                                startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                            }
+                        }
+                    }
+                }
+
+                // 确保目标K线在可视范围内
+                if (targetIndex < startIndex) {
+                    startIndex = Math.max(0, targetIndex - (totalVisibleBars - positionFromRight - 1));
+                    endIndex = Math.min(dates.length - 1, startIndex + totalVisibleBars - 1);
+                } else if (targetIndex > endIndex) {
+                    endIndex = Math.min(dates.length - 1, targetIndex + positionFromRight);
+                    startIndex = Math.max(0, endIndex - totalVisibleBars + 1);
+                }
+
+                // 配置ECharts选项 - 创建主图和副图
+                const option = {
+                    title: {
+                        text: `${name} (${code})`,
+                        left: 'center',
+                        textStyle: {
+                            fontSize: 16,
+                            color: '#7A5C4D'
+                        }
+                    },
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: {
+                            type: 'cross'
+                        },
+                        formatter: function(params) {
+                            if (params.length > 0) {
+                                const param = params[0];
+                                const dataIndex = param.dataIndex;
+                                const date = dates[dataIndex];
+                                
+                                // 判断是否为主图的K线数据还是副图的成交量数据
+                                let klineParam = null;
+                                let volumeParam = null;
+                                
+                                params.forEach(p => {
+                                    if (p.seriesName === 'K线') {
+                                        klineParam = p;
+                                    } else if (p.seriesName === '成交量') {
+                                        volumeParam = p;
+                                    }
+                                });
+                                
+                                if (klineParam) {
+                                    const [open, close, low, high] = klineData[dataIndex]; // [open, close, low, high]
+                                    const volume = stockData.volumes[dataIndex]; // 成交量
+
+                                    // 计算相对前一日收盘价的涨跌幅
+                                    let prevClose = null;
+                                    if (dataIndex > 0) {
+                                        prevClose = klineData[dataIndex - 1][1]; // 前一日收盘价 (索引1是close)
+                                    } else if (window.KLINE_DATA_GLOBAL && window.KLINE_DATA_GLOBAL[code]) {
+                                        // 如果是第一个数据点，尝试从历史数据中获取前一日收盘价
+                                        const stockData = window.KLINE_DATA_GLOBAL[code];
+                                        const allDates = stockData.dates;
+                                        const allValues = stockData.values;
+                                        const currentIdx = allDates.findIndex(d => d.replace(/-/g, '') === date.replace(/-/g, ''));
+                                        if (currentIdx > 0) {
+                                            prevClose = allValues[currentIdx - 1][1]; // 前一日收盘价 (索引1是close)
+                                        }
+                                    }
+
+                                    let openChange = '';
+                                    let highChange = '';
+                                    let lowChange = '';
+                                    let closeChange = '';
+
+                                    if (prevClose !== null) {
+                                        const openPercent = ((open - prevClose) / prevClose * 100);
+                                        const closePercent = ((close - prevClose) / prevClose * 100);
+                                        const lowPercent = ((low - prevClose) / prevClose * 100);
+                                        const highPercent = ((high - prevClose) / prevClose * 100);
+
+                                        openChange = ` (${openPercent >= 0 ? '+' : ''}${openPercent.toFixed(2)}%)`;
+                                        closeChange = ` (${closePercent >= 0 ? '+' : ''}${closePercent.toFixed(2)}%)`;
+                                        lowChange = ` (${lowPercent >= 0 ? '+' : ''}${lowPercent.toFixed(2)}%)`;
+                                        highChange = ` (${highPercent >= 0 ? '+' : ''}${highPercent.toFixed(2)}%)`;
+                                    }
+
+                                    // 检查是否为目标日期
+                                    if (dataIndex === targetIndex) {
+                                        return `${date}<br/>
+                                            开盘: ${open}${openChange}<br/>
+                                            收盘: ${close}${closeChange}<br/>
+                                            最低: ${low}${lowChange}<br/>
+                                            最高: ${high}${highChange}<br/>
+                                            成交量: ${volume.toLocaleString()}<br/>
+                                            <span style="color:#000000">【目标K线】</span>`;
+                                    } else {
+                                        return `${date}<br/>
+                                            开盘: ${open}${openChange}<br/>
+                                            收盘: ${close}${closeChange}<br/>
+                                            最低: ${low}${lowChange}<br/>
+                                            最高: ${high}${highChange}<br/>
+                                            成交量: ${volume.toLocaleString()}`;
+                                    }
+                                } else if (volumeParam) {
+                                    // 如果只有成交量数据
+                                    const volume = stockData.volumes[dataIndex];
+                                    return `${date}<br/>成交量: ${volume.toLocaleString()}`;
+                                }
+                            }
+                            return '';
+                        }
+                    },
+                    grid: [{
+                        left: '10%',
+                        right: '10%',
+                        top: '10%',
+                        height: '60%'
+                    }, {
+                        left: '10%',
+                        right: '10%',
+                        top: '75%',
+                        height: '15%'
+                    }],
+                    xAxis: [
+                        {
+                            type: 'category',
+                            data: dates,
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 0
+                        },
+                        {
+                            type: 'category',
+                            data: dates,
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 1
+                        }
+                    ],
+                    yAxis: [
+                        {
+                            type: 'value',
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 0
+                        },
+                        {
+                            type: 'value',
+                            axisLabel: {
+                                color: '#7A5C4D'
+                            },
+                            gridIndex: 1
+                        }
+                    ],
+                    series: [
+                        {
+                            name: 'K线',
+                            type: 'candlestick',
+                            data: klineDataWithColors,
+                            itemStyle: {
+                                color: '#ef4444',      // 阳线填充色（红色）
+                                color0: '#22c55e',     // 阴线填充色（绿色）
+                                borderColor: '#ef4444', // 阳线边框色（红色）
+                                borderColor0: '#22c55e' // 阴线边框色（绿色）
+                            },
+                            lineStyle: {
+                                width: 1
+                            },
+                            xAxisIndex: 0,
+                            yAxisIndex: 0
+                        },
+                        {
+                            name: '成交量',
+                            type: 'bar',
+                            data: stockData.volumes.map((vol, idx) => {
+                                // 根据当日涨跌确定柱子颜色
+                                const [open, close, low, high] = klineData[idx];
+                                const isRise = close >= open;
+                                return {
+                                    value: vol,
+                                    itemStyle: {
+                                        color: isRise ? '#ef4444' : '#22c55e'
+                                    }
+                                };
+                            }),
+                            xAxisIndex: 1,
+                            yAxisIndex: 1
+                        }
+                    ],
+                    dataZoom: [
+                        {
+                            type: 'inside',
+                            xAxisIndex: [0, 1],
+                            startValue: dates[Math.max(0, startIndex)],
+                            endValue: dates[Math.min(dates.length - 1, endIndex)]
+                        },
+                        {
+                            type: 'slider',
+                            xAxisIndex: [0, 1],
+                            startValue: dates[Math.max(0, startIndex)],
+                            endValue: dates[Math.min(dates.length - 1, endIndex)],
+                            bottom: 10
+                        }
+                    ]
+                };
+                
+                myChart.setOption(option);
+                
+                // 响应式调整
+                window.addEventListener('resize', () => {
+                    myChart.resize();
+                });
+            } else {
+                chartDom.innerHTML = '<div class="flex items-center justify-center h-full text-[#7A5C4D]">暂无K线数据</div>';
+            }
+            
+            updateStockCounter();
+        }
+
+        // 更新股票计数器
+        function updateStockCounter() {
+            if (currentAllStocks.length > 0 && currentStockIndex >= 0) {
+                document.getElementById('stockCounter').textContent = 
+                    `${currentStockIndex + 1} / ${currentAllStocks.length}`;
+            } else {
+                document.getElementById('stockCounter').textContent = '0 / 0';
+            }
+        }
+
+        // 显示下一个股票的K线图
+        function showNextStock() {
+            if (currentAllStocks.length === 0) return;
+            
+            currentStockIndex = (currentStockIndex + 1) % currentAllStocks.length;
+            const stock = currentAllStocks[currentStockIndex];
+            showKLineModal(stock.code, stock.name);
+        }
+
+        // 显示上一个股票的K线图
+        function showPrevStock() {
+            if (currentAllStocks.length === 0) return;
+            
+            currentStockIndex = (currentStockIndex - 1 + currentAllStocks.length) % currentAllStocks.length;
+            const stock = currentAllStocks[currentStockIndex];
+            showKLineModal(stock.code, stock.name);
+        }
+
+        // 为股票项目添加点击事件
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('stock-item')) {
+                const code = e.target.getAttribute('data-code');
+                const name = e.target.getAttribute('data-name');
+                if (code && name) {
+                    showKLineModal(code, name);
+                }
+            }
+        });
+
+        // 关闭模态框
+        document.getElementById('closeModal').addEventListener('click', function() {
+            document.getElementById('klineModal').classList.add('hidden');
+        });
+
+        // K线模态框导航按钮
+        document.getElementById('prevStockBtn').addEventListener('click', showPrevStock);
+        document.getElementById('nextStockBtn').addEventListener('click', showNextStock);
+
+        // 页面加载完成后初始化
+        window.addEventListener('DOMContentLoaded', function() {
+            loadData();
+            updateButtonStates();
+        });
+    </script>
+</body>
+</html>
