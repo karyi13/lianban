@@ -12,9 +12,9 @@
 
 ## 技术栈
 
-- **语言**: Python 3.12+
+- **语言**: Python 3.11+
 - **数据处理**: pandas, numpy
-- **数据获取**: pytdx, akshare
+- **数据获取**: pytdx, akshare, 腾讯行情API (web.ifzq.gtimg.cn)
 - **数据存储**: parquet格式
 - **可视化**: ECharts (前端), HTML/CSS/JavaScript
 - **HTTP请求**: requests
@@ -32,7 +32,10 @@ lgbp2/
 │   ├── config.py           # 配置管理模块
 │   ├── di_container.py     # 依赖注入容器
 │   ├── interfaces.py       # 接口定义模块
-│   ├── services.py         # 服务实现模块
+│   ├── fetchers.py         # 数据获取器实现（PyTDX/AkShare/Tencent/Composite）
+│   ├── validation.py       # 数据验证模块
+│   ├── storage.py          # 数据存储模块
+│   ├── services.py         # 兼容层（re-export 拆分后的类，保证旧引用可用）
 │   ├── backup_manager.py   # 数据备份管理模块
 │   └── monitoring.py       # 监控指标模块
 ├── data/                   # 数据存储目录
@@ -50,10 +53,10 @@ lgbp2/
 ## 核心功能
 
 ### 1. 数据获取 (DataFetcher)
-- 从PyTDX和AkShare获取A股股票日线数据
+- 从PyTDX、AkShare、腾讯行情获取A股股票日线数据
 - 支持增量更新，避免重复获取已有数据
 - 多线程并发获取，提高效率
-- 自动处理连接池和故障转移
+- 自动处理连接池和故障转移（PyTDX → AkShare → Tencent 三级降级）
 
 ### 2. 数据分析 (Analyzer)
 - 识别涨停股票（区分主板、创业板、ST股不同涨跌幅限制）
@@ -111,6 +114,7 @@ python main.py fetch --start-date 20241201 --end-date 20241231
 
 - **PyTDX**: 用于获取实时股票数据
 - **AkShare**: 作为备用数据源
+- **腾讯行情API**: 作为最终降级数据源（`web.ifzq.gtimg.cn`，股票列表从现有数据文件读取）
 - **东方财富API**: 用于获取股票概念题材信息
 
 ## 特色功能
@@ -119,7 +123,7 @@ python main.py fetch --start-date 20241201 --end-date 20241231
 2. **多维度分析**: 按连板天数、概念题材、涨停板类型等多维度展示
 3. **交互式界面**: 支持日期选择、股票筛选、K线查看等功能
 4. **增量更新**: 支持增量数据获取，避免重复下载
-5. **多数据源**: 支持PyTDX和AkShare双数据源，提高数据获取稳定性
+5. **多数据源**: 支持PyTDX、AkShare、腾讯行情三数据源降级，提高数据获取稳定性
 
 ## 配置选项
 

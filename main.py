@@ -4,27 +4,21 @@ A股连板分析工具 - 统一入口
 """
 import pandas as pd
 import numpy as np
-from pytdx.hq import TdxHq_API
-import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import datetime
 import time
 import os
-import threading
 import json
 import argparse
-from typing import Optional
 from function.stock_concepts import get_stock_concepts
-import requests
+from function.generate_kline_data import generate_kline_data
 from functools import wraps
 import random
 from depend.config import config
 from depend.di_container import container
-from depend.services import CompositeDataFetcher
-from depend.backup_manager import backup_manager
 from depend.monitoring import monitoring_manager
-from utils.logging_utils import StructuredLogger, performance_monitor, log_performance
+from utils.logging_utils import performance_monitor, log_performance
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -65,86 +59,6 @@ def retry_with_backoff(max_retries=None, base_delay=None, max_delay=None, backof
 DEFAULT_START_DATE = config.DEFAULT_START_DATE
 DEFAULT_OUTPUT_FILE = config.DEFAULT_OUTPUT_FILE
 
-
-def validate_stock_data(df):
-    """
-    验证股票数据的完整性与合理性
-
-    Args:
-        df (pd.DataFrame): 股票数据DataFrame
-
-    Returns:
-        tuple: (is_valid, validation_report)
-    """
-    if df.empty:
-        return False, "数据为空"
-
-    validation_report = []
-    is_valid = True
-
-    # 检查必需列是否存在
-    required_columns = ['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        validation_report.append(f"缺少必要列: {missing_columns}")
-        is_valid = False
-
-    # 检查数据类型
-    if 'date' in df.columns:
-        # 尝试转换日期格式
-        try:
-            df['date'] = pd.to_datetime(df['date'], format='%Y%m%d', errors='coerce')
-            invalid_dates = df['date'].isna().sum()
-            if invalid_dates > 0:
-                validation_report.append(f"无效日期格式: {invalid_dates} 条记录")
-        except:
-            validation_report.append("日期格式转换失败")
-            is_valid = False
-
-    # 检查数值列的合理性
-    numeric_columns = ['open', 'high', 'low', 'close', 'volume']
-    for col in numeric_columns:
-        if col in df.columns:
-            # 检查负值
-            negative_values = (df[col] < 0).sum()
-            if negative_values > 0:
-                validation_report.append(f"{col} 列存在 {negative_values} 个负值")
-
-            # 检查异常值（如价格为0或异常高）
-            if col in ['open', 'high', 'low', 'close']:
-                zero_prices = (df[col] == 0).sum()
-                if zero_prices > 0:
-                    validation_report.append(f"{col} 列存在 {zero_prices} 个零价格")
-
-                # 检查价格是否合理（比如超过10000元的股票可能需要检查）
-                high_prices = (df[col] > 10000).sum()
-                if high_prices > 0:
-                    validation_report.append(f"{col} 列存在 {high_prices} 个异常高价格(>10000)")
-
-    # 检查 OHLC 关系的合理性
-    if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
-        invalid_ohlc = (
-            (df['high'] < df['low']) |
-            (df['high'] < df['open']) |
-            (df['high'] < df['close']) |
-            (df['low'] > df['open']) |
-            (df['low'] > df['close'])
-        ).sum()
-        if invalid_ohlc > 0:
-            validation_report.append(f"OHLC关系不合理: {invalid_ohlc} 条记录")
-            is_valid = False
-
-    # 检查重复数据
-    duplicate_rows = df.duplicated(subset=['symbol', 'date']).sum()
-    if duplicate_rows > 0:
-        validation_report.append(f"存在 {duplicate_rows} 条重复数据")
-
-    # 检查缺失值
-    total_missing = df.isnull().sum().sum()
-    if total_missing > 0:
-        validation_report.append(f"存在 {total_missing} 个缺失值")
-
-    return is_valid, validation_report
 
 def validate_date_format(date_str):
     """
@@ -207,34 +121,13 @@ DEFAULT_END_DATE = get_default_end_date()
 DEFAULT_OUTPUT_FILE = config.DEFAULT_OUTPUT_FILE
 MAX_WORKERS = config.MAX_WORKERS  # Reduced workers to avoid connection spamming
 
-# Thread-local storage for PyTDX connections
-thread_local = threading.local()
-
-def get_thread_api():
-    """Get or create a thread-local PyTDX API connection."""
-    if not hasattr(thread_local, "api"):
-        api = TdxHq_API(heartbeat=True)
-        # Try connecting
-        try:
-            primary_server = config.PYTDX_SERVERS[0]
-            if api.connect(primary_server[0], primary_server[1], time_out=config.REQUEST_TIMEOUT):
-                thread_local.api = api
-                return api
-            # Fallbacks
-            for server in config.PYTDX_SERVERS[1:]:
-                if api.connect(server[0], server[1], time_out=config.REQUEST_TIMEOUT):
-                    thread_local.api = api
-                    return api
-        except:
-            pass
-        thread_local.api = None
-    return thread_local.api
 
 class DataFetcher:
-    def __init__(self, output_file=DEFAULT_OUTPUT_FILE, data_fetcher_service=None, data_storage=None):
+    def __init__(self, output_file=DEFAULT_OUTPUT_FILE, data_fetcher_service=None, data_storage=None, data_validator=None):
         # Use injected service or get from container
         self.data_fetcher_service = data_fetcher_service or container.get('data_fetcher')
         self.data_storage = data_storage or container.get('data_storage')
+        self.data_validator = data_validator or container.get('data_validator')
         self.output_file = output_file
 
 
@@ -262,41 +155,6 @@ class DataFetcher:
             pd.DataFrame: 包含日线数据的DataFrame，如果获取失败则返回None
         """
         return self.data_fetcher_service.fetch_daily_data(code, market, start_date, end_date)
-
-    @retry_with_backoff(max_retries=2, base_delay=1, max_delay=10)
-    def fetch_daily_akshare_with_date_range(self, code, symbol, start_date, end_date):
-        """
-        使用AkShare获取指定日期范围的日线数据（备用方法）
-
-        Args:
-            code (str): 股票代码
-            symbol (str): 股票代码（带交易所后缀）
-            start_date (str): 开始日期，格式 'YYYYMMDD'
-            end_date (str): 结束日期，格式 'YYYYMMDD'
-
-        Returns:
-            pd.DataFrame: 包含日线数据的DataFrame，如果获取失败则返回空DataFrame
-        """
-        try:
-            # AkShare is HTTP based, thread-safe usually
-            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
-            if df.empty:
-                return pd.DataFrame()
-
-            df = df.rename(columns={
-                '日期': 'date',
-                '开盘': 'open',
-                '最高': 'high',
-                '最低': 'low',
-                '收盘': 'close',
-                '成交量': 'volume',
-                '成交额': 'amount'
-            })
-            df['date'] = df['date'].astype(str).str.replace('-', '')
-            return df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']]
-        except Exception as e:
-            logger.error(f"AkShare fetch failed for {code}: {e}")
-            raise  # Re-raise the exception to trigger the retry decorator
 
     def process_stock_with_date_range(self, stock_info, start_date, end_date):
         """
@@ -419,7 +277,13 @@ class DataFetcher:
             future_to_stock = {executor.submit(self.process_stock_with_date_range, stock_info, self.start_date, self.end_date): stock_info for stock_info in stocks}
 
             for i, future in enumerate(as_completed(future_to_stock)):
-                res = future.result()
+                try:
+                    res = future.result()
+                except Exception as e:
+                    stock_info = future_to_stock[future]
+                    logger.error(f"Failed to fetch data for {stock_info.get('symbol', 'unknown')}: {e}")
+                    res = None
+
                 if res is not None:
                     all_data.append(res)
 
@@ -433,7 +297,7 @@ class DataFetcher:
                 new_data_df[col] = pd.to_numeric(new_data_df[col], errors='coerce')
 
             # Validate the new data before processing
-            is_valid, validation_report = validate_stock_data(new_data_df)
+            is_valid, validation_report = self.data_validator.validate(new_data_df)
             if not is_valid:
                 logger.warning(f"新获取的数据验证失败: {validation_report}")
                 # Optionally, we could filter out invalid data or stop processing
@@ -447,7 +311,7 @@ class DataFetcher:
                 try:
                     existing_df = pd.read_parquet(self.output_file)
                     # Validate existing data
-                    is_valid_existing, validation_report_existing = validate_stock_data(existing_df)
+                    is_valid_existing, validation_report_existing = self.data_validator.validate(existing_df)
                     if not is_valid_existing:
                         logger.warning(f"现有数据验证失败: {validation_report_existing}")
 
@@ -459,7 +323,7 @@ class DataFetcher:
                     combined_df = combined_df.sort_values(['symbol', 'date']).reset_index(drop=True)
 
                     # Validate combined data
-                    is_valid_combined, validation_report_combined = validate_stock_data(combined_df)
+                    is_valid_combined, validation_report_combined = self.data_validator.validate(combined_df)
                     if not is_valid_combined:
                         logger.warning(f"合并后的数据验证失败: {validation_report_combined}")
                     else:
@@ -919,8 +783,11 @@ def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE,
         date_data = df_with_next_change[df_with_next_change['date'] == date].copy()
 
         # Group by consecutive limit up days
+        # 注意: pandas 3.0 中 groupby.apply 会从结果中排除分组键列, 需用 x.name 恢复
         grouped = date_data.groupby('consecutive_limit_up_days').apply(
-            lambda x: x[['symbol', 'name', 'close', 'consecutive_limit_up_days', 'concept_themes', 'next_day_open_change_pct']].to_dict('records')
+            lambda x: x[['symbol', 'name', 'close', 'concept_themes', 'next_day_open_change_pct']]
+            .assign(consecutive_limit_up_days=x.name)
+            .to_dict('records')
         ).to_dict()
 
         # Convert to the format expected by the HTML
@@ -985,64 +852,6 @@ def generate_ladder_data_for_html(ladder_file: str = config.DEFAULT_LADDER_FILE,
             logger.info(f"  {level}连板: {count}只")
 
 
-
-
-def generate_kline_data(input_file: str = config.DEFAULT_OUTPUT_FILE, output_file: str = config.DEFAULT_KLINE_JS_FILE, chunk_size: int = config.CHUNK_SIZE):
-    """Generate K-line JS data file for HTML visualization."""
-    logger.info("Starting K-line data generation", {
-        "input_file": input_file,
-        "output_file": output_file,
-        "chunk_size": chunk_size
-    })
-
-    if not os.path.exists(input_file):
-        logger.error(f"Input file not found: {input_file}")
-        return
-
-    # 由于pandas的read_parquet不支持chunksize参数，我们直接加载整个文件
-    timer_id = performance_monitor.start_timer("load_kline_data")
-    df = pd.read_parquet(input_file)
-    load_duration = performance_monitor.end_timer(timer_id)
-    logger.info(f"Loaded K-line data: {len(df)} records", {
-        "duration_seconds": round(load_duration, 4),
-        "columns_count": len(df.columns)
-    })
-
-    timer_id = performance_monitor.start_timer("process_kline_data")
-    df_sorted = df.sort_values(['symbol', 'date'])
-    df_sorted['date_formatted'] = pd.to_datetime(df_sorted['date'], format='%Y%m%d', errors='coerce').dt.strftime('%Y-%m-%d')
-    grouped = df_sorted.groupby('symbol')
-    kline_data = {}
-    total_symbols = len(grouped)
-
-    for i, (symbol, group) in enumerate(grouped):
-        kline_data[symbol] = {
-            'name': group['name'].iloc[0] if 'name' in group.columns else '',
-            'dates': group['date_formatted'].tolist(),
-            'values': group[['open', 'close', 'low', 'high']].values.tolist(),
-            'volumes': group['volume'].tolist()
-        }
-
-        # Log progress every 100 symbols
-        if (i + 1) % 100 == 0:
-            logger.info(f"Processed {i + 1}/{total_symbols} symbols...")
-
-    process_duration = performance_monitor.end_timer(timer_id)
-    logger.info(f"Completed processing K-line data", {
-        "duration_seconds": round(process_duration, 4),
-        "symbols_count": len(kline_data)
-    })
-
-    timer_id = performance_monitor.start_timer("save_kline_js_file")
-    js_content = f"// 自动生成的K线数据文件\nwindow.KLINE_DATA_GLOBAL = {json.dumps(kline_data, ensure_ascii=False)};"
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(js_content)
-    save_duration = performance_monitor.end_timer(timer_id)
-
-    logger.info(f"Saved K-line data to {output_file}", {
-        "duration_seconds": round(save_duration, 4),
-        "symbols_count": len(kline_data)
-    })
 
 
 def main():

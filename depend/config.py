@@ -3,7 +3,7 @@
 """
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Tuple
 
 
 @dataclass
@@ -27,13 +27,17 @@ class Config:
     
     # 并发配置
     MAX_WORKERS: int = 20
-    CONCEPT_FETCH_WORKERS: int = 10
+    CONCEPT_FETCH_WORKERS: int = 30
     
     # 数据处理配置
     CHUNK_SIZE: int = 50000
     
     # PyTDX 服务器配置
-    PYTDX_SERVERS: list = None  # 默认服务器列表将在 __post_init__ 中设置
+    PYTDX_SERVERS: Optional[List[Tuple[str, int]]] = None  # 默认服务器列表将在 __post_init__ 中设置
+    
+    # 腾讯行情API配置
+    TENCENT_KLINE_URL: str = "https://web.ifzq.gtimg.cn/appstock/app/kline/kline"
+    TENCENT_KLINE_COUNT: int = 800  # 单次请求最大K线数量
     
     # 东方财富API配置
     EASTMONEY_API_URL: str = "http://push2.eastmoney.com/api/qt/stock/get"

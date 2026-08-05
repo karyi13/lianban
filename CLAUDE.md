@@ -31,25 +31,31 @@ python main.py full
 ## 数据流程架构
 
 ```
-数据获取 (PyTDX/AkShare) → 数据分析 (涨停识别/连板计算) → JS生成 → 前端展示
+数据获取 (PyTDX/AkShare/Tencent) → 数据分析 (涨停识别/连板计算) → JS生成 → 前端展示
 ```
 
-### 1. 数据获取层 (`depend/services.py`)
+### 1. 数据获取层 (`depend/fetchers.py`)
 - `PyTDXDataFetcher`: 使用 PyTDX 库从行情服务器获取数据（主用）
 - `AkShareDataFetcher`: 使用 AkShare HTTP API（备用/降级）
-- `CompositeDataFetcher`: 复合获取器，优先 PyTDX，失败后自动切换 AkShare
+- `TencentDataFetcher`: 使用腾讯行情 API (web.ifzq.gtimg.cn)，从现有数据文件读取股票列表
+- `CompositeDataFetcher`: 复合获取器，优先 PyTDX，失败后依次降级 AkShare、Tencent
+- `get_thread_api()`: 线程本地 PyTDX 连接管理
 
-### 2. 数据分析层 (`main.py` `Analyzer` 类)
+### 2. 数据验证与存储 (`depend/validation.py`, `depend/storage.py`)
+- `DataValidator`: 数据完整性与合理性验证
+- `DataStorage`: 按扩展名（parquet/csv/json）读写数据，支持备份
+
+### 3. 数据分析层 (`main.py` `Analyzer` 类)
 - `identify_limit_ups()`: 根据涨跌幅限制识别涨停股票
   - 主板/创业板 10%，ST 5%，科创板/创业板注册制 20%
 - `calculate_consecutive_days()`: 计算连续涨停天数
 - `identify_board_type()`: 识别板块类型（一字板/T字板/换手板）
 
-### 3. 数据生成层 (`main.py`)
-- `generate_ladder_data_for_html()`: 生成 `data/ladder_data.js`
-- `generate_kline_data()`: 生成 `data/kline_data.js`
+### 4. 数据生成层
+- `generate_ladder_data_for_html()` (`main.py`): 生成 `data/ladder_data.js`
+- `generate_kline_data()` (`function/generate_kline_data.py`): 生成 `data/kline_data.js`
 
-### 4. 前端 (`concept_ladder.html`)
+### 5. 前端 (`concept_ladder.html`)
 - 加载 `data/ladder_data.js` 和 `data/kline_data.js`
 - 使用 ECharts 显示 K 线图
 - 纯静态 HTML，部署在 Vercel
@@ -63,7 +69,9 @@ python main.py full
 | `data/ladder_data.js` | 前端连板数据 |
 | `data/kline_data.js` | 前端 K 线数据 |
 | `function/stock_concepts.py` | 获取概念题材（东方财富 API） |
-| `depend/services.py` | 服务实现（数据获取/验证/存储） |
+| `depend/fetchers.py` | 数据获取器（PyTDX/AkShare/Composite） |
+| `depend/validation.py` | 数据验证 |
+| `depend/storage.py` | 数据存储 |
 | `depend/config.py` | 配置（服务器列表、并发数等） |
 
 ## 配置修改

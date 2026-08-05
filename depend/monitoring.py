@@ -3,6 +3,7 @@
 """
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -36,29 +37,31 @@ class MonitoringManager:
         self.metrics_file = Path(metrics_file)
         self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
         self.current_metrics = FetchMetrics(date=datetime.now().strftime("%Y-%m-%d"))
-        
+        self._lock = threading.Lock()
+
     def record_request(self, success: bool, response_time: float = 0.0, error_msg: str = ""):
-        """记录单次请求"""
-        self.current_metrics.total_requests += 1
-        
-        if success:
-            self.current_metrics.successful_requests += 1
-        else:
-            self.current_metrics.failed_requests += 1
-            if error_msg:
-                self.current_metrics.errors.append(error_msg)
-        
-        # 更新成功率
-        if self.current_metrics.total_requests > 0:
-            self.current_metrics.success_rate = (
-                self.current_metrics.successful_requests / self.current_metrics.total_requests
-            )
-        
-        # 更新平均响应时间
-        total_time = (
-            self.current_metrics.avg_response_time * (self.current_metrics.total_requests - 1)
-        ) + response_time
-        self.current_metrics.avg_response_time = total_time / self.current_metrics.total_requests
+        """记录单次请求（线程安全）"""
+        with self._lock:
+            self.current_metrics.total_requests += 1
+
+            if success:
+                self.current_metrics.successful_requests += 1
+            else:
+                self.current_metrics.failed_requests += 1
+                if error_msg:
+                    self.current_metrics.errors.append(error_msg)
+
+            # 更新成功率
+            if self.current_metrics.total_requests > 0:
+                self.current_metrics.success_rate = (
+                    self.current_metrics.successful_requests / self.current_metrics.total_requests
+                )
+
+            # 更新平均响应时间
+            total_time = (
+                self.current_metrics.avg_response_time * (self.current_metrics.total_requests - 1)
+            ) + response_time
+            self.current_metrics.avg_response_time = total_time / self.current_metrics.total_requests
     
     def get_current_metrics(self) -> FetchMetrics:
         """获取当前指标"""

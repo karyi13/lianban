@@ -1,2 +1,6 @@
 .vercel
 .env*.local
+__pycache__/
+*.py[cod]
+data/metrics.json
+data/backup/

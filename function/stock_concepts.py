@@ -40,7 +40,7 @@ def retry_with_backoff(max_retries=3, base_delay=1, max_delay=10, backoff_factor
         return wrapper
     return decorator
 
-@retry_with_backoff(max_retries=3, base_delay=1, max_delay=10)
+@retry_with_backoff(max_retries=1, base_delay=1, max_delay=10)
 def get_stock_concepts(code):
     """
     获取股票的概念题材、行业和地域信息。
